@@ -1,28 +1,42 @@
+import torch
+
 from multiprocessing import Process, Pipe
 from obstacle_tower_env import ObstacleTowerEnv
 
 
-def start_environment(connection, worker_id, env_path, retro, realtime_mode):
+def start_environment(connection, worker_id, env_path, retro, realtime_mode, seed):
     obstacle_tower = ObstacleTowerEnv(env_path,
                                       worker_id=worker_id,
                                       retro=retro,
                                       timeout_wait=90,
                                       realtime_mode=False)
-
+    obstacle_tower.reset()
+    obstacle_tower.seed(seed)
     while True:
         command, action = connection.recv()
         if command == 'sample':
             connection.send(obstacle_tower.action_space.sample())
         if command == 'step':
-            state, reward, done, info = obstacle_tower.step(action)
+            observation, reward, done, info = obstacle_tower.step(action)
+            state, keys, time = observation
             if done:
                 state = obstacle_tower.reset()
-            connection.send((state, reward, info))
+                state, keys, time = observation
+            connection.send((prepare_state(state), keys, time, reward, info))
         elif command == 'reset':
-            state = obstacle_tower.reset()
-            connection.send(state)
+            state, keys, time = obstacle_tower.reset()
+            connection.send((prepare_state(state), keys, time))
         elif command == 'close':
             connection.close()
+
+
+def prepare_state(state):
+    """
+    Convert array to pytorch.Tensor and reshape it as (C, H, W)
+    """
+    height, width, channels = state.shape
+    state_tensor = torch.Tensor(state).view(channels, height, width)
+    return state_tensor
 
 
 class ParallelEnvironmentWrapper:
@@ -37,9 +51,8 @@ class ParallelEnvironmentWrapper:
     def start_parallel_execution(self):
         self.processes = [Process(target=start_environment,
                                   args=(child, worker_id, self.env_path,
-                                        self.retro, self.realtime_mode),
-                                  daemon=True)
-                                  for worker_id, child in enumerate(self.child_connections)]
+                                        self.retro, self.realtime_mode, seed=0),
+                                  daemon=True) for worker_id, child in enumerate(self.child_connections)]
 
         for process in self.processes:
             process.start()
@@ -53,15 +66,14 @@ class ParallelEnvironmentWrapper:
         for action, parent in zip(actions, self.parent_connections):
             parent.send(('step', action))
 
+        # [(state, key, time, reward, done, info)...]
         results = [parent.recv() for parent in self.parent_connections]
-        # return as torch.Tensor
         return results
 
     def reset(self):
         [parent.send(('reset', None)) for parent in self.parent_connections]
 
         states = [parent.recv() for parent in self.parent_connections]
-        # return as torch.Tensor
         return states
 
     def close(self):
