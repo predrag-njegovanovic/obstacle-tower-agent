@@ -4,14 +4,14 @@ from multiprocessing import Process, Pipe
 from obstacle_tower_env import ObstacleTowerEnv
 
 
-def start_environment(connection, worker_id, env_path, retro, realtime_mode, seed):
+def start_environment(connection, worker_id, env_path, retro, realtime_mode):
     obstacle_tower = ObstacleTowerEnv(env_path,
                                       worker_id=worker_id,
                                       retro=retro,
                                       timeout_wait=90,
                                       realtime_mode=False)
     obstacle_tower.reset()
-    obstacle_tower.seed(seed)
+    obstacle_tower.seed(worker_id)
     while True:
         command, action = connection.recv()
         if command == 'sample':
@@ -19,10 +19,12 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode, see
         if command == 'step':
             observation, reward, done, info = obstacle_tower.step(action)
             state, keys, time = observation
+
             if done:
                 state = obstacle_tower.reset()
                 state, keys, time = observation
-            connection.send((prepare_state(state), keys, time, reward, info))
+
+            connection.send((prepare_state(state), keys, time, reward, info, done))
         elif command == 'reset':
             state, keys, time = obstacle_tower.reset()
             connection.send((prepare_state(state), keys, time))
@@ -51,8 +53,9 @@ class ParallelEnvironmentWrapper:
     def start_parallel_execution(self):
         self.processes = [Process(target=start_environment,
                                   args=(child, worker_id, self.env_path,
-                                        self.retro, self.realtime_mode, seed=0),
-                                  daemon=True) for worker_id, child in enumerate(self.child_connections)]
+                                        self.retro, self.realtime_mode),
+                                  daemon=True)
+                          for worker_id, child in enumerate(self.child_connections)]
 
         for process in self.processes:
             process.start()
@@ -66,7 +69,7 @@ class ParallelEnvironmentWrapper:
         for action, parent in zip(actions, self.parent_connections):
             parent.send(('step', action))
 
-        # [(state, key, time, reward, done, info)...]
+        # [(state, key, time, reward, info, done)...]
         results = [parent.recv() for parent in self.parent_connections]
         return results
 
