@@ -1,4 +1,5 @@
 import torch
+import random
 
 
 class ExperienceMemory:
@@ -14,10 +15,36 @@ class ExperienceMemory:
         self.full = True
 
     def add_frame(self, frame, env_id):
-        # check if frame is second terminal state in a row
-
         self.memory[self.first_free_frame_index][env_id] = frame
         self.first_free_frame_index += 1
+
+    def sample_frames(self, sequence_size):
+        env_indices = list(self.num_envs)
+        accumulated_frames = []
+        batched_frames = []
+
+        for env in range(self.num_envs):
+            frames = []
+            start_index = random.randint(0, self.memory_size - sequence_size - 1)
+
+            # If terminate state, start from next one
+            if self.memory[start_index][env].done:
+                start_index += 1
+
+            for index in range(sequence_size):
+                frame = self.memory_size[start_index + index][env]
+                if frame.done:
+                    break
+
+                frames.append(frame)
+            accumulated_frames.append(frames)
+
+        truncate_size = min([len(frames) for frames in accumulated_frames])
+
+        for env_index in random.shuffle(env_indices):
+            batched_frames.append(accumulated_frames[env_index][:truncate_size])
+
+        return torch.Tensor(batched_frames)
 
 
 class MemoryFrame:
