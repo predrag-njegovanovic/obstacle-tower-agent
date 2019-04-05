@@ -1,3 +1,4 @@
+import cv2
 import torch
 
 from multiprocessing import Process, Pipe
@@ -36,8 +37,9 @@ def prepare_state(state):
     """
     Convert array to pytorch.Tensor and reshape it as (C, H, W)
     """
-    height, width, channels = state.shape
-    state_tensor = torch.Tensor(state).view(channels, height, width)
+    frame = cv2.resize(state, (84, 84, 3))
+    height, width, channels = frame.shape
+    state_tensor = torch.Tensor(frame).view(channels, height, width)
     return state_tensor
 
 
