@@ -43,7 +43,7 @@ def prepare_state(state):
     return state_tensor
 
 
-class ParallelEnvironmentWrapper:
+class ParallelEnvironment:
     def __init__(self, env_path, num_of_processes, retro=False, realtime_mode=False):
         self.parent_connections, self.child_connections = zip(*[Pipe() for _
                                                                 in range(num_of_processes)])
