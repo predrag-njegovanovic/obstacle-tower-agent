@@ -18,8 +18,10 @@ class ConvNetwork(torch.nn.Module):
     def forward(self, inputs):
         conv1_out = self.conv1(inputs)
         self.relu(conv1_out)
+
         conv2_out = self.conv2(conv1_out)
         self.relu(conv2_out)
+
         linear_out = self.fully_connected(conv2_out)
         self.relu(linear_out)
         return linear_out
@@ -31,7 +33,7 @@ class LSTMNetwork(torch.nn.Module):
                                   hidden_size=hidden_state_size,
                                   batch_first=True)
 
-    def forward(self, inputs, reward_and_last_action, last_hidden_state=None):
+    def forward(self, inputs, reward_and_last_action, last_hidden_state):
         features = torch.cat([inputs, reward_and_last_action, 1], 1)
         # 8 x 1 x 256
         output, hidden_state = self.lstm(features, last_hidden_state)
