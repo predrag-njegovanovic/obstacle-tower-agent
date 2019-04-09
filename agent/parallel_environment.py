@@ -18,14 +18,22 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
         if command == 'sample':
             connection.send(obstacle_tower.action_space.sample())
         if command == 'step':
-            observation, reward, done, info = obstacle_tower.step(action)
-            state, keys, time = observation
+            cumulative_reward = 0
 
-            if done:
-                state = obstacle_tower.reset()
+            # frame skipping
+            for _ in range(4):
+                observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time = observation
 
-            connection.send((prepare_state(state), keys, time, reward, info, done))
+                if done:
+                    state = obstacle_tower.reset()
+                    state, keys, time = observation
+                    break
+
+                cumulative_reward += reward
+
+            connection.send((prepare_state(state), keys, time,
+                             cumulative_reward, info, done))
         elif command == 'reset':
             state, keys, time = obstacle_tower.reset()
             connection.send((prepare_state(state), keys, time))

@@ -41,8 +41,8 @@ class LSTMNetwork(torch.nn.Module):
 
 
 class ValueNetwork(torch.nn.Module):
-    def __init__(self, input_size):
-        self.value = torch.nn.Linear(in_features=input_size, out_features=1)
+    def __init__(self):
+        self.value = torch.nn.Linear(in_features=256, out_features=1)
 
     def forward(self, inputs):
         """
@@ -52,8 +52,8 @@ class ValueNetwork(torch.nn.Module):
 
 
 class PolicyNetwork(torch.nn.Module):
-    def __init__(self, input_size, action_size):
-        self.fully_connected = torch.nn.Linear(in_features=input_size,
+    def __init__(self, action_size):
+        self.fully_connected = torch.nn.Linear(in_features=256,
                                                out_features=action_size)
         self.policy = torch.nn.LogSoftmax(dim=1)
 
@@ -65,8 +65,8 @@ class PolicyNetwork(torch.nn.Module):
 
 
 class PixelControlNetwork(torch.nn.Module):
-    def __init__(self, input_size, action_size):
-        self.fully_connected = torch.nn.Linear(in_features=input_size,
+    def __init__(self, action_size):
+        self.fully_connected = torch.nn.Linear(in_features=256,
                                                out_features=7 * 7 * 32)
         self.deconv_value = torch.nn.ConvTranspose2d(in_channels=32,
                                                      out_channels=1,
