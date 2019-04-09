@@ -1,5 +1,6 @@
-import definitions
 import itertools
+
+from agent import definitions
 
 
 def create_action_space():

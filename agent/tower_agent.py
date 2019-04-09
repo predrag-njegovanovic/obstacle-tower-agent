@@ -1,4 +1,4 @@
-import base_networks
+from agent import base_networks
 
 
 class TowerAgent:

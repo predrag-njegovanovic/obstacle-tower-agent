@@ -3,6 +3,8 @@ import torch
 
 class ConvNetwork(torch.nn.Module):
     def __init__(self, first_layer_filters, second_layer_filters, out_features):
+        super(ConvNetwork, self).__init__()
+
         self.conv1 = torch.nn.Conv2d(in_channels=3,
                                      out_channels=first_layer_filters,
                                      kernel_size=(8, 8),
@@ -22,50 +24,66 @@ class ConvNetwork(torch.nn.Module):
         conv2_out = self.conv2(conv1_out)
         self.relu(conv2_out)
 
-        linear_out = self.fully_connected(conv2_out)
+        fc_input = conv2_out.view(conv2_out.size(0), -1)
+        linear_out = self.fully_connected(fc_input)
         self.relu(linear_out)
+
         return linear_out
 
 
 class LSTMNetwork(torch.nn.Module):
     def __init__(self, input_size, hidden_state_size, action_size):
+        super(LSTMNetwork, self).__init__()
+
         self.lstm = torch.nn.LSTM(input_size=input_size + action_size + 1,
                                   hidden_size=hidden_state_size,
                                   batch_first=True)
 
     def forward(self, inputs, reward_and_last_action, last_hidden_state):
-        features = torch.cat([inputs, reward_and_last_action, 1], 1)
-        # 8 x 1 x 256
-        output, hidden_state = self.lstm(features, last_hidden_state)
+        features = torch.cat((inputs, reward_and_last_action), dim=1)
+        # 8 x 311
+        batch_seq = features.unsqueeze(1)
+        # 8 x 1 x 311 (batch, seq, in)
+        output, hidden_state = self.lstm(batch_seq, last_hidden_state)
         return output, hidden_state
 
 
 class ValueNetwork(torch.nn.Module):
     def __init__(self):
+        super(ValueNetwork, self).__init__()
+
         self.value = torch.nn.Linear(in_features=256, out_features=1)
 
     def forward(self, inputs):
         """
         Return estimated value V(s).
         """
-        return self.value(inputs)
+        batched_inputs = inputs.view(inputs.size(0), -1)
+        # create Tensor([8]) out of Tensor(8 x 1)
+        value = torch.squeeze(self.value(batched_inputs))
+        return value
 
 
 class PolicyNetwork(torch.nn.Module):
     def __init__(self, action_size):
+        super(PolicyNetwork, self).__init__()
+
         self.fully_connected = torch.nn.Linear(in_features=256,
                                                out_features=action_size)
-        self.policy = torch.nn.LogSoftmax(dim=1)
+        self.policy = torch.nn.LogSoftmax(dim=0)
 
     def forward(self, inputs):
         """
         Return Log(pi).
         """
-        return self.policy(self.fully_connected(inputs))
+        fc_inputs = inputs.view(inputs.size(0), -1)
+        return self.policy(self.fully_connected(fc_inputs))
 
 
 class PixelControlNetwork(torch.nn.Module):
     def __init__(self, action_size):
+        super(PixelControlNetwork, self).__init__()
+
         self.fully_connected = torch.nn.Linear(in_features=256,
                                                out_features=7 * 7 * 32)
         self.deconv_value = torch.nn.ConvTranspose2d(in_channels=32,

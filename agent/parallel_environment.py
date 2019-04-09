@@ -1,5 +1,6 @@
 import cv2
 import torch
+import numpy as np
 
 from multiprocessing import Process, Pipe
 from obstacle_tower_env import ObstacleTowerEnv
@@ -11,8 +12,8 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
                                       retro=retro,
                                       timeout_wait=90,
                                       realtime_mode=False)
-    obstacle_tower.reset()
     obstacle_tower.seed(worker_id)
+    obstacle_tower.reset()
     while True:
         command, action = connection.recv()
         if command == 'sample':
@@ -32,8 +33,7 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
 
                 cumulative_reward += reward
 
-            connection.send((prepare_state(state), keys, time,
-                             cumulative_reward, info, done))
+            connection.send((prepare_state(state), keys, time, cumulative_reward, done))
         elif command == 'reset':
             state, keys, time = obstacle_tower.reset()
             connection.send((prepare_state(state), keys, time))
@@ -45,10 +45,11 @@ def prepare_state(state):
     """
     Convert array to pytorch.Tensor and reshape it as (C, H, W)
     """
-    frame = cv2.resize(state, (84, 84, 3))
+    frame = cv2.resize(state, (84, 84))
     height, width, channels = frame.shape
-    state_tensor = torch.Tensor(frame).view(channels, height, width)
-    return state_tensor
+    frame_array = np.array(frame)
+    reshaped_frame = np.reshape(frame_array, (channels, height, width))
+    return reshaped_frame
 
 
 class ParallelEnvironment:
@@ -79,15 +80,17 @@ class ParallelEnvironment:
         for action, parent in zip(actions, self.parent_connections):
             parent.send(('step', action))
 
-        # [(state, key, time, reward, info, done)...]
-        results = [parent.recv() for parent in self.parent_connections]
-        return results
+        # zip(*[(state, key, time, reward, done)...])
+        state, key, time, reward, done = zip(
+            *[parent.recv() for parent in self.parent_connections])
+        return torch.Tensor(state), torch.Tensor(key), torch.Tensor(time), \
+            torch.Tensor(reward), torch.Tensor(done)
 
     def reset(self):
         [parent.send(('reset', None)) for parent in self.parent_connections]
 
-        states = [parent.recv() for parent in self.parent_connections]
-        return states
+        states, key, time = zip(*[parent.recv() for parent in self.parent_connections])
+        return torch.Tensor(states), torch.Tensor(key), torch.Tensor(time)
 
     def close(self):
         [parent.send(('close', None)) for parent in self.parent_connections]

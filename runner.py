@@ -1,18 +1,35 @@
-import os
-import multiprocessing
-import definitions
+import agent.definitions as definitions
 
-from parallel_env_wrapper import ParallelEnvironment
-
-NUM_THREADS = multiprocessing.cpu_count()
+from agent.trainer import Trainer
+from agent.tower_agent import TowerAgent
+from agent.experience_memory import ExperienceMemory
+from agent.parallel_environment import ParallelEnvironment
+from agent.utils import create_action_space
 
 if __name__ == "__main__":
-    obs_env_path = os.path.join(definitions.OBSTACLE_TOWER_DIR, 'obstacletower')
-    env = ParallelEnvironment(obs_env_path, 2)
+    config = definitions.network_params
+
+    actions = create_action_space()
+    action_size = len(actions)
+
+    env = ParallelEnvironment(definitions.OBSTACLE_TOWER_PATH, definitions.NUM_ENVS)
+    memory = ExperienceMemory(definitions.NUM_ENVS, definitions.OBSERVATION_SIZE)
+    agent = TowerAgent(action_size,
+                       config['first_layer'],
+                       config['second_layer'],
+                       config['conv_output'],
+                       config['hidden_state_size'])
+
     env.start_parallel_execution()
-    states = env.reset()
-    print(states)
-    # for i in range(10):
-    #     samples = wrapper.sample()
-    #     results = wrapper.step(samples)
-    #     print(results)
+
+    trainer = Trainer(env,
+                      memory,
+                      agent,
+                      actions,
+                      definitions.NUM_ENVS,
+                      definitions.OBSERVATION_SIZE,
+                      definitions.BATCH_SIZE,
+                      definitions.EPOCHES,
+                      definitions.TIMESTAMPS)
+
+    trainer.train()
