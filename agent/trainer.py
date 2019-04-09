@@ -1,5 +1,10 @@
 import torch
 
+from tqdm import tqdm
+
+from agent.experience_memory import MemoryFrame
+from agent.utils import torch_device
+
 
 class Trainer:
     def __init__(self,
@@ -34,29 +39,39 @@ class Trainer:
         return prob_distribution.sample()
 
     def train(self):
+        self.agent_network.to_cuda()
         for _ in range(0, self.total_timesteps, self.experience_history_size):
-            self._fill_experience()
+            self._fill_experience(len(self.action_space))
             # update network
-            pass
+            self.experience_memory.empty()
 
-    def _fill_experience(self):
-        action_size = len(self.action_space)
-        old_state, key, time = self.env.reset()
-        for step in range(self.experience_history_size):
+    def _fill_experience(self, action_size):
+        old_state, key, old_time = self.env.reset()
+        for step in tqdm(range(self.experience_history_size)):
+            print(step)
             if step == 0:
-                reward_action = torch.zeros((self.num_envs, action_size + 1))
-                # (1x8) (8x54) tuple((,))
+                reward_action = torch.zeros(
+                    (self.num_envs, action_size + 1)).to(torch_device())
                 value, policy_acts, rhs = self.agent_network.act(old_state, reward_action)
-                import pdb
-                pdb.set_trace()
-                # (1x8)
-                action = self.sample_action(policy_acts)
             else:
-                pass
-                # load last hidden state from memory
-                # load last state from memory
-                # load last reward_action from memory
+                last_rhs = self.experience_memory.last_hidden_state
+                old_state, reward_action, old_time = self.experience_memory.last_frames()
+                value, policy_acts, rhs = self.agent_network.act(
+                    old_state, reward_action, last_rhs)
 
-            new_state, key, time, reward, done = self.env(action)
-            break
-            # create memory frame now (new_state, reward + action, old_state, time_diff)
+            action = self.sample_action(policy_acts)
+            new_actions = [self.action_space[act] for act in action]
+            self.experience_memory.last_hidden_state = rhs
+            new_state, key, new_time, reward, done = self.env.step(new_actions)
+
+            for i in range(self.num_envs):
+                action_encoding = torch.zeros((action_size + 1))
+                action_encoding[action[i]] = 1
+
+                memory_frame = MemoryFrame(new_state[i], old_state[i], new_time[i],
+                                           old_time[i], key[i], reward[i],
+                                           action_encoding, done[i], value[i])
+
+                self.experience_memory.add_frame(memory_frame, i)
+
+            self.experience_memory.increase_frame_pointer()

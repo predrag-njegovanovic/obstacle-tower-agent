@@ -18,6 +18,13 @@ class TowerAgent:
         self.value = base_networks.ValueNetwork()
         self.policy = base_networks.PolicyNetwork(action_size)
 
+    def to_cuda(self):
+        self.conv_network.cuda()
+        self.lstm_network.cuda()
+        self.pc_network.cuda()
+        self.value.cuda()
+        self.policy.cuda()
+
     def act(self, state, reward_and_last_action, last_hidden_state=None):
         """
         Run batch of states (3-channel images) through network to get

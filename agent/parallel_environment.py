@@ -60,6 +60,7 @@ class ParallelEnvironment:
         self.retro = retro
         self.realtime_mode = realtime_mode
         self.processes = None
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def start_parallel_execution(self):
         self.processes = [Process(target=start_environment,
@@ -83,14 +84,14 @@ class ParallelEnvironment:
         # zip(*[(state, key, time, reward, done)...])
         state, key, time, reward, done = zip(
             *[parent.recv() for parent in self.parent_connections])
-        return torch.Tensor(state), torch.Tensor(key), torch.Tensor(time), \
+        return torch.Tensor(state).to(self.device), torch.Tensor(key), torch.Tensor(time), \
             torch.Tensor(reward), torch.Tensor(done)
 
     def reset(self):
         [parent.send(('reset', None)) for parent in self.parent_connections]
 
         states, key, time = zip(*[parent.recv() for parent in self.parent_connections])
-        return torch.Tensor(states), torch.Tensor(key), torch.Tensor(time)
+        return torch.Tensor(states).to(self.device), torch.Tensor(key), torch.Tensor(time)
 
     def close(self):
         [parent.send(('close', None)) for parent in self.parent_connections]
