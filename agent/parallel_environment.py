@@ -12,7 +12,7 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
                                       retro=retro,
                                       timeout_wait=90,
                                       realtime_mode=False)
-    obstacle_tower.seed(worker_id)
+    # obstacle_tower.seed(worker_id)
     obstacle_tower.reset()
     while True:
         command, action = connection.recv()
@@ -47,7 +47,7 @@ def prepare_state(state):
     """
     frame = cv2.resize(state, (84, 84))
     height, width, channels = frame.shape
-    frame_array = np.array(frame)
+    frame_array = np.array(frame * 255, dtype=np.uint8)
     reshaped_frame = np.reshape(frame_array, (channels, height, width))
     return reshaped_frame
 
@@ -84,14 +84,25 @@ class ParallelEnvironment:
         # zip(*[(state, key, time, reward, done)...])
         state, key, time, reward, done = zip(
             *[parent.recv() for parent in self.parent_connections])
-        return torch.Tensor(state).to(self.device), torch.Tensor(key), torch.Tensor(time), \
-            torch.Tensor(reward), torch.Tensor(done)
+
+        state_tensor = torch.Tensor(state).to(self.device)
+        key_tensor = torch.Tensor(key)
+        time_tensor = torch.Tensor(time)
+        reward_tensor = torch.Tensor(reward)
+        done_tensor = torch.Tensor(done)
+
+        return state_tensor, key_tensor, time_tensor, reward_tensor, done_tensor
 
     def reset(self):
         [parent.send(('reset', None)) for parent in self.parent_connections]
 
         states, key, time = zip(*[parent.recv() for parent in self.parent_connections])
-        return torch.Tensor(states).to(self.device), torch.Tensor(key), torch.Tensor(time)
+
+        state_tensor = torch.Tensor(states).to(self.device)
+        key_tensor = torch.Tensor(key)
+        time_tensor = torch.Tensor(time)
+
+        return state_tensor, key_tensor, time_tensor
 
     def close(self):
         [parent.send(('close', None)) for parent in self.parent_connections]

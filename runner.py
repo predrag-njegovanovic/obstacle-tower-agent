@@ -13,14 +13,17 @@ if __name__ == "__main__":
     action_size = len(actions)
 
     env = ParallelEnvironment(definitions.OBSTACLE_TOWER_PATH, definitions.NUM_ENVS)
-    memory = ExperienceMemory(definitions.NUM_ENVS, definitions.OBSERVATION_SIZE)
+    env.start_parallel_execution()
+
+    memory = ExperienceMemory(definitions.NUM_ENVS,
+                              definitions.OBSERVATION_SIZE,
+                              action_size)
+
     agent = TowerAgent(action_size,
                        config['first_layer'],
                        config['second_layer'],
                        config['conv_output'],
                        config['hidden_state_size'])
-
-    env.start_parallel_execution()
 
     trainer = Trainer(env,
                       memory,
@@ -31,5 +34,4 @@ if __name__ == "__main__":
                       definitions.BATCH_SIZE,
                       definitions.EPOCHES,
                       definitions.TIMESTAMPS)
-
     trainer.train()

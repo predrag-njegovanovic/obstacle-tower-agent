@@ -1,17 +1,16 @@
 import torch
 import random
-import numpy as np
 
 from agent.utils import torch_device
 
 
 class ExperienceMemory:
-    def __init__(self, num_envs, memory_size):
-        self.memory = np.empty((memory_size, num_envs), dtype=MemoryFrame.__class__)
-        self.full = False
+    def __init__(self, num_envs, memory_size, action_size):
+        self._init_memory(num_envs, memory_size, action_size)
         self.memory_size = memory_size
+        self.action_size = action_size
         self.num_envs = num_envs
-        self.first_free_frame_index = 0
+        self.memory_pointer = 0
         self._last_hidden_state = None
 
     @property
@@ -22,120 +21,95 @@ class ExperienceMemory:
     def last_hidden_state(self, value):
         self._last_hidden_state = value
 
-    def empty(self):
-        self.memory = torch.zeros((self.num_envs, self.memory_size), dtype=object)
-        self.full = True
-        self.first_free_frame_index = 0
+    def _init_memory(self, num_envs, memory_size, action_size):
+        self.frame = torch.zeros((memory_size, num_envs, 3, 84, 84)).type(
+            torch.uint8).to(torch_device())
+        self.time = torch.zeros((memory_size, num_envs))
+        self.key = torch.zeros((memory_size, num_envs))
+        self.reward = torch.zeros((memory_size, num_envs))
+        self.done_state = torch.zeros((memory_size, num_envs))
+        self.value = torch.zeros((memory_size, num_envs)).to(torch_device())
+        self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(torch.uint8)
+        self.reward_action = torch.zeros(
+            (memory_size, action_size + 1, num_envs)).to(torch_device())
 
-    def add_frame(self, frame, env_id):
-        self.memory[self.first_free_frame_index, env_id] = frame
+    def empty(self):
+        self.frame[0] = 0
+        self.time[0] = 0
+        self.key[0] = 0
+        self.reward[0] = 0
+        self.done_state[0] = 0
+        self.value[0] = 0
+        self.pixel_change[0] = 0
+        self.reward_action[0] = 0
+        self.memory_pointer = 0
+
+    def add_experience(self, new_state, old_state, new_time, old_time, key,
+                       reward, action_encoding, done, predicted_value):
+
+        self.frame[self.memory_pointer].copy_(new_state)
+        self.time[self.memory_pointer].copy_(new_time)
+        self.key[self.memory_pointer].copy_(key)
+        self.reward[self.memory_pointer].copy_(self._calculate_reward(
+            reward, new_time, old_time, key))
+        self.value[self.memory_pointer].copy_(predicted_value)
+        self.reward_action[self.memory_pointer].copy_(
+            self._concatenate_reward_and_action(reward, action_encoding))
+        self.done_state[self.memory_pointer].copy_(done)
+        self.pixel_change[self.memory_pointer].copy_(self._calculate_pixel_change(
+            new_state, old_state))
 
     def increase_frame_pointer(self):
-        self.first_free_frame_index += 1
+        self.memory_pointer += 1
+
+    def _calculate_reward(self, reward, new_time, old_time, key):
+        return reward + self._time_normalize(new_time, old_time) + 0.2 * key
 
     def last_frames(self):
-        frames = self.memory[self.first_free_frame_index - 1, :]
-        states, reward_actions, time = [], [], []
-        for frame in frames:
-            states.append(frame.frame)
-            reward_actions.append(frame.reward_and_last_action)
-            time.append(frame.time)
-        return torch.stack(states).to(torch_device()), torch.stack(reward_actions).to(torch_device()), torch.stack(time)
+        states = self.frame[self.memory_pointer - 1]
+        time = self.time[self.memory_pointer - 1]
+        reward_actions = self.reward_action[self.memory_pointer - 1]
+
+        return states, reward_actions.view(self.num_envs, self.action_size + 1), time
 
     def sample_frames(self, sequence_size):
-        env_indices = list(self.num_envs)
-        accumulated_frames = []
-        batched_frame = []
+        # batched_frame = []
         batched_reward = []
         batched_value = []
         batched_pixel_control = []
         batched_action_reward = []
 
         for env in range(self.num_envs):
-            frames = []
-            start_index = random.randint(0, self.memory_size - sequence_size - 1)
+            start = random.randint(0, self.memory_size - sequence_size - 1)
 
             # If terminate state, start from next one
-            if self.memory[start_index, env].done:
-                start_index += 1
+            if self.done_state[start, env]:
+                start += 1
 
-            for index in range(sequence_size):
-                frame = self.memory_size[start_index + index, env]
-                if frame.isdone_state():
+            for i in range(sequence_size):
+                if self.done_state[start + i, env]:
+                    # states = self.frame[start:start + i - 1, :, :, :, env]
+                    rewards = self.reward[start:start + i - 1, env]
+                    values = self.value[start:start + i - 1, env]
+                    pixel_controls = self.value[start:start + i - 1, :, :, env]
+                    action_rewards = self.reward_action[start:start + i - 1, env]
+                    # insert flag
                     break
 
-                frames.append(frame)
-            accumulated_frames.append(frames)
+            # if not flag
+            # states = self.frame[start:start + sequence_size, :, :, :, env]
+            rewards = self.reward[start:start + sequence_size, env]
+            values = self.value[start:start + sequence_size, env]
+            pixel_controls = self.value[start:start + sequence_size, :, :, env]
+            action_rewards = self.reward_action[start:start + sequence_size, env]
 
-        truncate_size = min([len(frames) for frames in accumulated_frames])
+            # batched_frame.append(states)
+            batched_reward.append(rewards)
+            batched_value.append(values)
+            batched_pixel_control.append(pixel_controls)
+            batched_action_reward.append(action_rewards)
 
-        for env_index in random.shuffle(env_indices):
-            frame_list, reward_list, value_list, pc_list, action_reward_list = \
-                zip(*[(frame.frame, frame.reward, frame.value, frame.pixel_control, frame.reward_and_last_action)
-                      for frame in accumulated_frames[env_index, :truncate_size]])
-
-            batched_frame.append(frame_list)
-            batched_reward.append(reward_list)
-            batched_value.append(value_list)
-            batched_pixel_control.append(pc_list)
-            batched_action_reward.append(action_reward_list)
-
-        frame_tensor = torch.Tensor(batched_frame)
-        frame_tensor.transpose_(0, 1)
-
-        reward_tensor = torch.Tensor(batched_reward)
-        reward_tensor.transpose_(0, 1)
-
-        value_tensor = torch.Tensor(batched_value)
-        value_tensor.transpose_(0, 1)
-
-        pixel_tensor = torch.Tensor(batched_pixel_control)
-        action_reward_tensor = torch.Tensor(batched_action_reward)
-
-        return frame_tensor, reward_tensor, value_tensor, \
-            pixel_tensor.permute(1, 2, 0), action_reward_tensor.permute(1, 2, 0)
-
-
-class MemoryFrame:
-    def __init__(self,
-                 new_state,
-                 old_state,
-                 new_time,
-                 old_time,
-                 key,
-                 reward,
-                 action_encoding,
-                 done,
-                 predicted_value):
-
-        self._frame = new_state
-        self._time = new_time
-        self._time_reward = self._time_normalize(new_time, old_time)
-        self._reward = reward
-        self.done_state = done
-        self.key = key
-        self.value = predicted_value
-        self.pixel_change = self._calculate_pixel_change(new_state, old_state)
-        self.reward_and_last_action = self._concatenate_reward_and_action(
-            reward, action_encoding)
-
-    @property
-    def frame(self):
-        return self._frame
-
-    @property
-    def time(self):
-        return self._time
-
-    @property
-    def reward(self):
-        if self.done:
-            return 0
-        else:
-            return self._reward + self._time_reward + self.key * 0.2
-
-    def isdone_state(self):
-        return self.done_state
+        return batched_reward, batched_value, batched_pixel_control, batched_action_reward
 
     def _time_normalize(self, new_time, old_time):
         """
@@ -146,22 +120,24 @@ class MemoryFrame:
 
     def _subsample(self, frame_mean_diff, piece_size=4):
         shapes = frame_mean_diff.shape
-        subsamples_shape = shapes[0] // piece_size, piece_size, shapes[1] // piece_size, piece_size
-        return frame_mean_diff.reshape(subsamples_shape).mean(-1).mean(1)
+        subsamples_shape = self.num_envs, shapes[1] // piece_size, piece_size, shapes[2] // piece_size, piece_size
+        reshaped_frame = frame_mean_diff.reshape(subsamples_shape)
+        reshaped_mean = torch.mean(reshaped_frame, -1)
+        pc_output = torch.mean(reshaped_mean, 2)
+        return pc_output.type(torch.uint8)
 
     def _calculate_pixel_change(self, new_state, old_state):
         """
         Calculate pixel change between two states by creating
         frame differences and then subsampling it to twenty 4x4 pieces.
         """
-        # Check mean with torch operations
-        new_state_np = new_state.cpu().numpy()
-        old_state_np = old_state.cpu().numpy()
-        frame_diff = np.absolute(
-            new_state_np[:, 2:-2, 2:-2] - old_state_np[:, 2:-2, 2:-2])
-        frame_mean = np.mean(frame_diff, 0)
+        new_state = new_state.type(torch.float32)
+        old_state = old_state.type(torch.float32)
+
+        frame_diff = torch.abs(new_state[:, :, 2:-2, 2:-2] - old_state[:, :, 2:-2, 2:-2])
+        frame_mean = torch.mean(frame_diff, dim=1, keepdim=False)
         subsampled_frame = self._subsample(frame_mean)
-        return torch.Tensor(subsampled_frame)
+        return subsampled_frame
 
     def _concatenate_reward_and_action(self, reward, action_encoding):
         """

@@ -18,7 +18,8 @@ class ConvNetwork(torch.nn.Module):
         self.relu = torch.nn.ReLU(inplace=True)
 
     def forward(self, inputs):
-        conv1_out = self.conv1(inputs)
+        new_input = inputs.type(torch.float32)
+        conv1_out = self.conv1(new_input)
         self.relu(conv1_out)
 
         conv2_out = self.conv2(conv1_out)
