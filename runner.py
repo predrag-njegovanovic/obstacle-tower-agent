@@ -15,23 +15,28 @@ if __name__ == "__main__":
     env = ParallelEnvironment(definitions.OBSTACLE_TOWER_PATH, definitions.NUM_ENVS)
     env.start_parallel_execution()
 
-    memory = ExperienceMemory(definitions.NUM_ENVS,
-                              definitions.OBSERVATION_SIZE,
-                              action_size)
+    memory = ExperienceMemory(
+        definitions.NUM_ENVS, definitions.OBSERVATION_SIZE, action_size
+    )
 
-    agent = TowerAgent(action_size,
-                       config['first_layer'],
-                       config['second_layer'],
-                       config['conv_output'],
-                       config['hidden_state_size'])
+    agent = TowerAgent(
+        action_size,
+        config["first_layer"],
+        config["second_layer"],
+        config["conv_output"],
+        config["hidden_state_size"],
+    )
+    agent.to_cuda()
 
-    trainer = Trainer(env,
-                      memory,
-                      agent,
-                      actions,
-                      definitions.NUM_ENVS,
-                      definitions.OBSERVATION_SIZE,
-                      definitions.BATCH_SIZE,
-                      definitions.EPOCHES,
-                      definitions.TIMESTAMPS)
+    trainer = Trainer(
+        env,
+        memory,
+        agent,
+        actions,
+        definitions.NUM_ENVS,
+        definitions.OBSERVATION_SIZE,
+        definitions.BATCH_SIZE,
+        definitions.EPOCHES,
+        definitions.TIMESTAMPS,
+    )
     trainer.train()

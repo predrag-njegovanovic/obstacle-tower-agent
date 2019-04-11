@@ -5,14 +5,18 @@ class ConvNetwork(torch.nn.Module):
     def __init__(self, first_layer_filters, second_layer_filters, out_features):
         super(ConvNetwork, self).__init__()
 
-        self.conv1 = torch.nn.Conv2d(in_channels=3,
-                                     out_channels=first_layer_filters,
-                                     kernel_size=(8, 8),
-                                     stride=4)
-        self.conv2 = torch.nn.Conv2d(in_channels=first_layer_filters,
-                                     out_channels=second_layer_filters,
-                                     kernel_size=(4, 4),
-                                     stride=2)
+        self.conv1 = torch.nn.Conv2d(
+            in_channels=3,
+            out_channels=first_layer_filters,
+            kernel_size=(8, 8),
+            stride=4,
+        )
+        self.conv2 = torch.nn.Conv2d(
+            in_channels=first_layer_filters,
+            out_channels=second_layer_filters,
+            kernel_size=(4, 4),
+            stride=2,
+        )
 
         self.fully_connected = torch.nn.Linear(2592, out_features)
         self.relu = torch.nn.ReLU(inplace=True)
@@ -36,9 +40,11 @@ class LSTMNetwork(torch.nn.Module):
     def __init__(self, input_size, hidden_state_size, action_size):
         super(LSTMNetwork, self).__init__()
 
-        self.lstm = torch.nn.LSTM(input_size=input_size + action_size + 1,
-                                  hidden_size=hidden_state_size,
-                                  batch_first=True)
+        self.lstm = torch.nn.LSTM(
+            input_size=input_size + action_size + 1,
+            hidden_size=hidden_state_size,
+            batch_first=True,
+        )
 
     def forward(self, inputs, reward_and_last_action, last_hidden_state):
         features = torch.cat((inputs, reward_and_last_action), dim=1)
@@ -69,8 +75,9 @@ class PolicyNetwork(torch.nn.Module):
     def __init__(self, action_size):
         super(PolicyNetwork, self).__init__()
 
-        self.fully_connected = torch.nn.Linear(in_features=256,
-                                               out_features=action_size)
+        self.fully_connected = torch.nn.Linear(
+            in_features=256, out_features=action_size
+        )
         self.policy = torch.nn.LogSoftmax(dim=0)
 
     def forward(self, inputs):
@@ -85,16 +92,13 @@ class PixelControlNetwork(torch.nn.Module):
     def __init__(self, action_size):
         super(PixelControlNetwork, self).__init__()
 
-        self.fully_connected = torch.nn.Linear(in_features=256,
-                                               out_features=7 * 7 * 32)
-        self.deconv_value = torch.nn.ConvTranspose2d(in_channels=32,
-                                                     out_channels=1,
-                                                     kernel_size=(4, 4),
-                                                     stride=2)
-        self.deconv_adv = torch.nn.ConvTranspose2d(in_channels=32,
-                                                   out_channels=action_size,
-                                                   kernel_size=(4, 4),
-                                                   stride=2)
+        self.fully_connected = torch.nn.Linear(in_features=256, out_features=7 * 7 * 32)
+        self.deconv_value = torch.nn.ConvTranspose2d(
+            in_channels=32, out_channels=1, kernel_size=(4, 4), stride=2
+        )
+        self.deconv_adv = torch.nn.ConvTranspose2d(
+            in_channels=32, out_channels=action_size, kernel_size=(4, 4), stride=2
+        )
         self.relu = torch.nn.ReLU(inplace=True)
 
     def forward(self, inputs):
