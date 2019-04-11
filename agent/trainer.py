@@ -45,7 +45,7 @@ class Trainer:
     def train(self):
         for timestep in range(0, self.total_timesteps, self.experience_history_size):
             self._fill_experience(timestep, len(self.action_space))
-            self._update_observations()
+            self._update_observations(len(self.action_space))
             self.experience_memory.empty()
 
     def _fill_experience(self, timestep, action_size):
@@ -73,8 +73,7 @@ class Trainer:
                 new_actions = [self.action_space[act] for act in action]
 
                 self.experience_memory.last_hidden_state = rhs
-                new_state, key, new_time, reward, done = self.env.step(new_actions)
-                action_encoding = torch.zeros((action_size + 1, self.num_envs))
+                new_state, key, new_time, reward, done = self.env.step(new_actions) action_encoding = torch.zeros((action_size + 1, self.num_envs))
                 policies = policy_acts.view(action_size, self.num_envs)
                 for i in range(self.num_envs):
                     action_encoding[action[i], i] = 1
@@ -94,10 +93,9 @@ class Trainer:
                 self.experience_memory.increase_frame_pointer()
                 timestep += 1
 
-    def _update_observations(self):
+    def _update_observations(self, action_size):
         for _ in range(self.num_of_epoches):
-            # need reward indices, not reward_action
-            rewards, values, policies, pixel_controls, reward_actions = self.experience_memory.sample_observations(
+            rewards, values, policies, pixel_controls, action_indices = self.experience_memory.sample_observations(
                 self.batch_size
             )
 
@@ -122,8 +120,9 @@ class Trainer:
             returns = torch.cat(batch_returns, dim=0).to(torch_device())
             values = torch.cat(values, dim=0)
 
+            # Calculate q_aux and pc_returns
             a2c_loss = self.agent_network.a2c_loss(policies, advantage, returns, values)
-            pc_loss = self.agent_network.pc_loss()
+            pc_loss = self.agent_network.pc_loss(action_size, action_indices, q_aux, pc_returns)
             loss = a2c_loss + pc_loss
 
             self.optim.zero_grad()

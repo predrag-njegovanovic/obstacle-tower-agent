@@ -39,6 +39,9 @@ class ExperienceMemory:
         self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(
             torch.uint8
         )
+        self.action_indices = torch.zeros((memory_size, action_size, num_envs)).to(
+            torch_device()
+        )
         self.reward_action = torch.zeros((memory_size, action_size + 1, num_envs)).to(
             torch_device()
         )
@@ -71,6 +74,7 @@ class ExperienceMemory:
         )
         self.value[self.memory_pointer].copy_(predicted_value)
         self.policy_values[self.memory_pointer].copy_(policy_value)
+        self.action_indices[self.memory_pointer].copy_(action_encoding)
         self.reward_action[self.memory_pointer].copy_(
             self._concatenate_reward_and_action(reward, action_encoding)
         )
@@ -94,7 +98,7 @@ class ExperienceMemory:
         batched_value = []
         batched_policy = []
         batched_pixel_control = []
-        batched_action_reward = []
+        batched_action_indices = []
 
         for env in range(self.num_envs):
             done_flag = False
@@ -110,7 +114,7 @@ class ExperienceMemory:
                     values = self.value[start : start + i - 1, env]
                     policy_values = self.policy_values[start : start + i - 1, :, env]
                     pixel_controls = self.pixel_change[start : start + i - 1, env, :, :]
-                    action_rewards = self.reward_action[start : start + i - 1, env]
+                    action_indices = self.action_indices[start : start + i - 1, env]
                     done_flag = True
                     break
 
@@ -123,20 +127,20 @@ class ExperienceMemory:
                 pixel_controls = self.pixel_change[
                     start : start + sequence_size, env, :, :
                 ]
-                action_rewards = self.reward_action[start : start + sequence_size, env]
+                action_indices = self.action_indices[start : start + sequence_size, env]
 
             batched_reward.append(rewards)
             batched_value.append(values)
             batched_policy.append(policy_values)
             batched_pixel_control.append(pixel_controls)
-            batched_action_reward.append(action_rewards)
+            batched_action_indices.append(action_indices)
 
         return (
             batched_reward,
             batched_value,
             torch.cat(batched_policy, dim=0),
             batched_pixel_control,
-            batched_action_reward,
+            torch.cat(batched_action_indices, dim=0),
         )
 
     # try gae later

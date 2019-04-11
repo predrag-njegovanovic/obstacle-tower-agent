@@ -13,6 +13,7 @@ class TowerAgent:
         hidden_state_size,
         entropy_coeff=0.01,
         value_coeff=0.5,
+        pc_lambda=0.99
     ):
 
         self.conv_network = base_networks.ConvNetwork(
@@ -28,8 +29,7 @@ class TowerAgent:
         self.entropy_coeff = entropy_coeff
         self.value_coeff = value_coeff
 
-    def to_cuda(self):
-        self.conv_network.cuda()
+    def to_cuda(self): self.conv_network.cuda()
         self.lstm_network.cuda()
         self.pc_network.cuda()
         self.value.cuda()
@@ -64,6 +64,7 @@ class TowerAgent:
         return q_aux
 
     def a2c_loss(self, policy_logs, advantage, returns, values):
+        # torch.mul with action indices?
         policy_loss = self._policy_loss(policy_logs, advantage)
         value_loss = self._value_loss(returns, values)
         entropy = self._entropy(policy_logs)
@@ -73,8 +74,15 @@ class TowerAgent:
         )
         return loss
 
-    def pc_loss(self):
-        pass
+    def pc_loss(self, action_size, action_indices, q_aux, pc_returns):
+        reshaped_indices = action_indices.view(-1, action_size, 1, 1)
+        pc_q_aux = torch.mul(q_aux, reshaped_indices)
+
+        pc_q_aux_sum = torch.sum(pc_q_aux, dim=1, keepdim=False)
+
+        # try with torch.sum instead of torch.mean
+        pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns * pc_q_aux_sum, 2))
+        return pc_loss
 
     def _policy_loss(self, policy_logs, adventage):
         return -torch.mean(adventage * policy_logs)
@@ -85,4 +93,5 @@ class TowerAgent:
     def _entropy(self, policy_logs):
         policy = torch.log(torch.clamp(policy_logs, 1e-20, 1.0))
 
+        # try with torch.sum instead of torch.mean
         return -torch.mean(policy_logs * policy)
