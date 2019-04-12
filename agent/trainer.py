@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from tqdm import tqdm
 
@@ -17,6 +18,7 @@ class Trainer:
         batch_size,
         num_of_epoches,
         total_timesteps,
+        learning_rate,
     ):
 
         self.env = parallel_environment
@@ -29,7 +31,7 @@ class Trainer:
         self.num_of_epoches = num_of_epoches
         self.total_timesteps = total_timesteps
         self.distribution = torch.distributions.Categorical
-        self.lr = 7e-4
+        self.lr = learning_rate
         self.optim = torch.optim.Adam(
             self.agent_network.parameters(), lr=self.lr, eps=1e-5
         )
@@ -142,7 +144,7 @@ class Trainer:
             returns = torch.cat(batch_returns, dim=0).to(torch_device())
             pc_returns = torch.cat(batch_pc_returns, dim=0).to(torch_device())
 
-            a2c_loss = self.agent_network.a2c_loss(
+            a2c_loss, policy_loss, value_loss, entropy = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices
             )
             pc_loss = self.agent_network.pc_loss(

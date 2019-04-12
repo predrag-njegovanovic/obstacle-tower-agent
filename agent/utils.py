@@ -1,7 +1,12 @@
 import torch
+import numpy as np
 import itertools
 
 from agent import definitions
+
+
+def log_uniform(low, high, size=None):
+    return np.exp(np.random.uniform(np.log(low), np.log(high), size))
 
 
 def create_action_space():

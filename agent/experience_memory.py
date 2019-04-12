@@ -172,7 +172,7 @@ class ExperienceMemory:
 
         return returns
 
-    def compute_pc_returns(self, q_aux, rewards, pixel_controls, gamma=0.1):
+    def compute_pc_returns(self, q_aux, rewards, pixel_controls, gamma=0.9):
         num_steps, height, width = pixel_controls.shape
 
         pc_returns = torch.zeros((num_steps, height, width))

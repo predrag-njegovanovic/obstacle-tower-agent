@@ -75,15 +75,14 @@ class TowerAgent:
         return q_aux, q_aux_max
 
     def a2c_loss(self, policy_logs, advantage, returns, values, action_indices):
-        # torch.mul with action indices?
-        policy_loss = self._policy_loss(policy_logs, advantage, action_indices)
-        value_loss = self._value_loss(returns, values)
-        entropy = self._entropy(policy_logs)
+        policy_loss = self.policy_loss(policy_logs, advantage, action_indices)
+        value_loss = self.value_loss(returns, values)
+        entropy = self.entropy(policy_logs)
 
         loss = (
             policy_loss + self.value_coeff * value_loss + self.entropy_coeff * entropy
         )
-        return loss
+        return loss, policy_loss, value_loss, entropy
 
     def pc_loss(self, action_size, action_indices, q_aux, pc_returns):
         reshaped_indices = action_indices.view(-1, action_size, 1, 1)
@@ -95,14 +94,14 @@ class TowerAgent:
         pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns * pc_q_aux_sum, 2))
         return pc_loss
 
-    def _policy_loss(self, policy_logs, adventage, action_indices):
+    def policy_loss(self, policy_logs, adventage, action_indices):
         pi_logs = torch.sum(torch.mul(policy_logs, action_indices), 1)
         return -torch.mean(adventage * pi_logs)
 
-    def _value_loss(self, returns, values):
+    def value_loss(self, returns, values):
         return torch.mean(torch.pow(returns - values, 2))
 
-    def _entropy(self, policy_logs):
+    def entropy(self, policy_logs):
         policy = torch.log(torch.clamp(policy_logs, 1e-20, 1.0))
 
         # try with torch.sum instead of torch.mean
