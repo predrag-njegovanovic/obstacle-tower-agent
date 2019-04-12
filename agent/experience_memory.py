@@ -46,6 +46,9 @@ class ExperienceMemory:
             torch_device()
         )
 
+    def mean_reward(self):
+        return torch.mean(self.reward).item()
+
     def empty(self):
         self.frame[0].copy_(self.frame[-1])
         self.time[0].copy_(self.time[-1])
@@ -93,54 +96,57 @@ class ExperienceMemory:
 
         return states, reward_actions.view(self.num_envs, self.action_size + 1), time
 
-    def sample_observations(self, sequence_size):
-        batched_reward = []
+    def sample_observations(self, sequence):
         batched_value = []
-        batched_policy = []
+        batched_states = []
+        batched_reward = []
         batched_pixel_control = []
         batched_action_indices = []
+        batched_reward_actions = []
 
         for env in range(self.num_envs):
             done_flag = False
-            start = random.randint(0, self.memory_size - sequence_size - 1)
+            start = random.randint(0, self.memory_size - sequence - 1)
 
-            # If terminate state, start from next one
+            # Check if there are two consecutive terminate states
             if self.done_state[start, env]:
                 start += 1
+                if self.done_state[start, env]:
+                    start += 1
 
-            for i in range(sequence_size):
+            for i in range(sequence):
                 if self.done_state[start + i, env]:
-                    rewards = self.reward[start : start + i - 1, env]
-                    values = self.value[start : start + i - 1, env]
-                    policy_values = self.policy_values[start : start + i - 1, :, env]
-                    pixel_controls = self.pixel_change[start : start + i - 1, env, :, :]
-                    action_indices = self.action_indices[start : start + i - 1, env]
+                    states = self.frame[start : start + i, env, :, :, :]
+                    reward_actions = self.reward_action[start : start + i, :, env]
+                    rewards = self.reward[start : start + i, env]
+                    values = self.value[start : start + i, env]
+                    pixel_controls = self.pixel_change[start : start + i, env, :, :]
+                    action_indices = self.action_indices[start : start + i, :, env]
                     done_flag = True
                     break
 
             if not done_flag:
-                rewards = self.reward[start : start + sequence_size, env]
-                values = self.value[start : start + sequence_size, env]
-                policy_values = self.policy_values[
-                    start : start + sequence_size, :, env
-                ]
-                pixel_controls = self.pixel_change[
-                    start : start + sequence_size, env, :, :
-                ]
-                action_indices = self.action_indices[start : start + sequence_size, env]
+                states = self.frame[start : start + sequence, env, :, :, :]
+                reward_actions = self.reward_action[start : start + sequence, :, env]
+                rewards = self.reward[start : start + sequence, env]
+                values = self.value[start : start + sequence, env]
+                pixel_controls = self.pixel_change[start : start + sequence, env, :, :]
+                action_indices = self.action_indices[start : start + sequence, :, env]
 
-            batched_reward.append(rewards)
             batched_value.append(values)
-            batched_policy.append(policy_values)
+            batched_states.append(states)
+            batched_reward.append(rewards)
             batched_pixel_control.append(pixel_controls)
+            batched_reward_actions.append(reward_actions)
             batched_action_indices.append(action_indices)
 
         return (
+            torch.cat(batched_states, dim=0),
+            torch.cat(batched_reward_actions, dim=0),
+            torch.cat(batched_action_indices, dim=0),
             batched_reward,
             batched_value,
-            torch.cat(batched_policy, dim=0),
             batched_pixel_control,
-            torch.cat(batched_action_indices, dim=0),
         )
 
     # try gae later
@@ -202,5 +208,4 @@ class ExperienceMemory:
         Concatenate one-hot action representation from last state
         and current state reward.
         """
-        action_encoding[-1] = reward
-        return action_encoding
+        return torch.cat((action_encoding, reward.unsqueeze(0)), dim=0)

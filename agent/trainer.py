@@ -46,12 +46,14 @@ class Trainer:
         for timestep in range(0, self.total_timesteps, self.experience_history_size):
             self._fill_experience(timestep, len(self.action_space))
             self._update_observations(len(self.action_space))
+            print(
+                "Mean reward per episode: {:.2f}".format(
+                    self.experience_memory.mean_reward()
+                )
+            )
             self.experience_memory.empty()
-
-    def _fill_experience(self, timestep, action_size):
+def _fill_experience(self, timestep, action_size):
         for step in tqdm(range(self.experience_history_size)):
-            if step == 30:
-                break
             with torch.no_grad():
                 if not timestep:
                     old_state, key, old_time = self.env.reset()
@@ -73,7 +75,9 @@ class Trainer:
                 new_actions = [self.action_space[act] for act in action]
 
                 self.experience_memory.last_hidden_state = rhs
-                new_state, key, new_time, reward, done = self.env.step(new_actions) action_encoding = torch.zeros((action_size + 1, self.num_envs))
+                new_state, key, new_time, reward, done = self.env.step(new_actions)
+
+                action_encoding = torch.zeros((action_size, self.num_envs))
                 policies = policy_acts.view(action_size, self.num_envs)
                 for i in range(self.num_envs):
                     action_encoding[action[i], i] = 1
@@ -94,9 +98,10 @@ class Trainer:
                 timestep += 1
 
     def _update_observations(self, action_size):
-        for _ in range(self.num_of_epoches):
-            rewards, values, policies, pixel_controls, action_indices = self.experience_memory.sample_observations(
-                self.batch_size
+        for _ in tqdm(range(self.num_of_epoches)):
+            exp_batches = self.experience_memory.sample_observations(self.batch_size)
+            states, reward_actions, action_indices, rewards, values, pixel_controls = (
+                exp_batches
             )
 
             batch_advantages = []
@@ -106,7 +111,7 @@ class Trainer:
                 returns = self.experience_memory.compute_returns(
                     rewards[env], values[env]
                 )
-                returns = torch.from_numpy(returns).float().to(torch_device())
+                returns = torch.Tensor(returns).to(torch_device())
                 adv = returns - values[env]
 
                 batch_advantages.append(adv)
@@ -117,13 +122,17 @@ class Trainer:
                 advantage + 1e-6
             )
 
+            new_value, policy_acts, _ = self.agent_network.act(states, reward_actions)
+            q_aux = self.agent_network.pixel_control_act(states, reward_actions)
+
             returns = torch.cat(batch_returns, dim=0).to(torch_device())
-            values = torch.cat(values, dim=0)
 
             # Calculate q_aux and pc_returns
-            a2c_loss = self.agent_network.a2c_loss(policies, advantage, returns, values)
-            pc_loss = self.agent_network.pc_loss(action_size, action_indices, q_aux, pc_returns)
-            loss = a2c_loss + pc_loss
+            a2c_loss = self.agent_network.a2c_loss(
+                policy_acts, advantage, returns, new_value, action_indices
+            )
+            # pc_loss = self.agent_network.pc_loss(action_size, action_indices, q_aux, pc_returns)
+            loss = a2c_loss
 
             self.optim.zero_grad()
             loss.backward()
