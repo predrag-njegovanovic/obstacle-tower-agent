@@ -28,6 +28,7 @@ class TowerAgent:
         self.policy = base_networks.PolicyNetwork(action_size)
         self.entropy_coeff = entropy_coeff
         self.value_coeff = value_coeff
+        self.pc_lambda = pc_lambda
 
     def to_cuda(self):
         self.conv_network.cuda()
@@ -70,8 +71,8 @@ class TowerAgent:
             conv_features, reward_and_last_action, last_hidden_state
         )
 
-        q_aux = self.pc_network(features)
-        return q_aux
+        q_aux, q_aux_max = self.pc_network(features)
+        return q_aux, q_aux_max
 
     def a2c_loss(self, policy_logs, advantage, returns, values, action_indices):
         # torch.mul with action indices?

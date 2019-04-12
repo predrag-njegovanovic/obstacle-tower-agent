@@ -92,7 +92,7 @@ class PixelControlNetwork(torch.nn.Module):
     def __init__(self, action_size):
         super(PixelControlNetwork, self).__init__()
 
-        self.fully_connected = torch.nn.Linear(in_features=256, out_features=7 * 7 * 32)
+        self.fully_connected = torch.nn.Linear(in_features=256, out_features=9 * 9 * 32)
         self.deconv_value = torch.nn.ConvTranspose2d(
             in_channels=32, out_channels=1, kernel_size=(4, 4), stride=2
         )
@@ -103,7 +103,7 @@ class PixelControlNetwork(torch.nn.Module):
 
     def forward(self, inputs):
         linear_out = self.fully_connected(inputs)
-        linear_out = linear_out.view([-1, 32, 7, 7])
+        linear_out = linear_out.view([-1, 32, 9, 9])
 
         self.relu(linear_out)
 
@@ -112,5 +112,5 @@ class PixelControlNetwork(torch.nn.Module):
 
         advantage_mean = torch.mean(advantage, dim=1, keepdim=True)
         q_aux = value + advantage - advantage_mean
-        # q_aux_max = torch.max(q_aux, dim=1, keepdim=False)[0]
-        return q_aux
+        q_aux_max = torch.max(q_aux, dim=1, keepdim=False)[0]
+        return q_aux, q_aux_max

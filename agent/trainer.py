@@ -52,7 +52,8 @@ class Trainer:
                 )
             )
             self.experience_memory.empty()
-def _fill_experience(self, timestep, action_size):
+
+    def _fill_experience(self, timestep, action_size):
         for step in tqdm(range(self.experience_history_size)):
             with torch.no_grad():
                 if not timestep:
@@ -63,6 +64,9 @@ def _fill_experience(self, timestep, action_size):
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action
                     )
+                    _, q_aux_max = self.agent_network.pixel_control_act(
+                        old_state, reward_action
+                    )
                 else:
                     last_rhs = self.experience_memory.last_hidden_state
                     old_state, reward_action, old_time = (
@@ -71,6 +75,10 @@ def _fill_experience(self, timestep, action_size):
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action, last_rhs
                     )
+                    _, q_aux_max = self.agent_network.pixel_control_act(
+                        old_state, reward_action, last_rhs
+                    )
+
                 action = self.sample_action(policy_acts)
                 new_actions = [self.action_space[act] for act in action]
 
@@ -93,6 +101,7 @@ def _fill_experience(self, timestep, action_size):
                     done,
                     value,
                     policies,
+                    q_aux_max,
                 )
                 self.experience_memory.increase_frame_pointer()
                 timestep += 1
@@ -100,22 +109,27 @@ def _fill_experience(self, timestep, action_size):
     def _update_observations(self, action_size):
         for _ in tqdm(range(self.num_of_epoches)):
             exp_batches = self.experience_memory.sample_observations(self.batch_size)
-            states, reward_actions, action_indices, rewards, values, pixel_controls = (
+            states, reward_actions, action_indices, rewards, values, q_auxes, pixel_controls = (
                 exp_batches
             )
 
             batch_advantages = []
             batch_returns = []
+            batch_pc_returns = []
 
             for env in range(self.num_envs):
                 returns = self.experience_memory.compute_returns(
                     rewards[env], values[env]
+                )
+                pc_returns = self.experience_memory.compute_pc_returns(
+                    q_auxes[env], rewards[env], pixel_controls[env]
                 )
                 returns = torch.Tensor(returns).to(torch_device())
                 adv = returns - values[env]
 
                 batch_advantages.append(adv)
                 batch_returns.append(returns)
+                batch_pc_returns.append(pc_returns)
 
             advantage = torch.cat(batch_advantages, dim=0).unsqueeze(-1)
             advantage = (advantage - torch.mean(advantage, dim=0)) / torch.std(
@@ -123,16 +137,19 @@ def _fill_experience(self, timestep, action_size):
             )
 
             new_value, policy_acts, _ = self.agent_network.act(states, reward_actions)
-            q_aux = self.agent_network.pixel_control_act(states, reward_actions)
+            q_aux, _ = self.agent_network.pixel_control_act(states, reward_actions)
 
             returns = torch.cat(batch_returns, dim=0).to(torch_device())
+            pc_returns = torch.cat(batch_pc_returns, dim=0).to(torch_device())
 
-            # Calculate q_aux and pc_returns
             a2c_loss = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices
             )
-            # pc_loss = self.agent_network.pc_loss(action_size, action_indices, q_aux, pc_returns)
-            loss = a2c_loss
+            pc_loss = self.agent_network.pc_loss(
+                action_size, action_indices, q_aux, pc_returns
+            )
+
+            loss = a2c_loss + pc_loss
 
             self.optim.zero_grad()
             loss.backward()

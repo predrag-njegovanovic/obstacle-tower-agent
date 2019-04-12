@@ -39,6 +39,7 @@ class ExperienceMemory:
         self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(
             torch.uint8
         )
+        self.q_aux = torch.zeros((memory_size, num_envs, 20, 20))
         self.action_indices = torch.zeros((memory_size, action_size, num_envs)).to(
             torch_device()
         )
@@ -67,6 +68,7 @@ class ExperienceMemory:
         done,
         predicted_value,
         policy_value,
+        q_aux,
     ):
 
         self.frame[self.memory_pointer].copy_(new_state)
@@ -85,6 +87,7 @@ class ExperienceMemory:
         self.pixel_change[self.memory_pointer].copy_(
             self._calculate_pixel_change(new_state, old_state)
         )
+        self.q_aux[self.memory_pointer].copy_(q_aux)
 
     def increase_frame_pointer(self):
         self.memory_pointer += 1
@@ -98,6 +101,7 @@ class ExperienceMemory:
 
     def sample_observations(self, sequence):
         batched_value = []
+        batched_q_aux = []
         batched_states = []
         batched_reward = []
         batched_pixel_control = []
@@ -106,7 +110,7 @@ class ExperienceMemory:
 
         for env in range(self.num_envs):
             done_flag = False
-            start = random.randint(0, self.memory_size - sequence - 1)
+            start = random.randint(0, self.memory_size - sequence - 2)
 
             # Check if there are two consecutive terminate states
             if self.done_state[start, env]:
@@ -122,6 +126,7 @@ class ExperienceMemory:
                     values = self.value[start : start + i, env]
                     pixel_controls = self.pixel_change[start : start + i, env, :, :]
                     action_indices = self.action_indices[start : start + i, :, env]
+                    q_auxes = self.q_aux[start : start + i, env, :, :]
                     done_flag = True
                     break
 
@@ -132,8 +137,10 @@ class ExperienceMemory:
                 values = self.value[start : start + sequence, env]
                 pixel_controls = self.pixel_change[start : start + sequence, env, :, :]
                 action_indices = self.action_indices[start : start + sequence, :, env]
+                q_auxes = self.q_aux[start : start + sequence, env, :, :]
 
             batched_value.append(values)
+            batched_q_aux.append(q_auxes)
             batched_states.append(states)
             batched_reward.append(rewards)
             batched_pixel_control.append(pixel_controls)
@@ -146,6 +153,7 @@ class ExperienceMemory:
             torch.cat(batched_action_indices, dim=0),
             batched_reward,
             batched_value,
+            batched_q_aux,
             batched_pixel_control,
         )
 
@@ -163,6 +171,20 @@ class ExperienceMemory:
             returns[step] = rewards[step] + discount * returns[step + 1]
 
         return returns
+
+    def compute_pc_returns(self, q_aux, rewards, pixel_controls, gamma=0.1):
+        num_steps, height, width = pixel_controls.shape
+
+        pc_returns = torch.zeros((num_steps, height, width))
+        if rewards[-1]:
+            pc_returns[-1] = q_aux[-1]
+
+        for step in reversed(range(num_steps - 1)):
+            pc_returns[step] = (
+                pixel_controls[step].type(torch.float32) + gamma * pc_returns[step + 1]
+            )
+
+        return pc_returns
 
     def _calculate_reward(self, reward, new_time, old_time, key):
         return reward + self._time_normalize(new_time, old_time) + 0.2 * key
