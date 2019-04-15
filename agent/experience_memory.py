@@ -2,7 +2,7 @@ import torch
 import random
 import numpy as np
 
-from agent.utils import torch_device
+from agent.utils import device
 
 
 class ExperienceMemory:
@@ -26,25 +26,25 @@ class ExperienceMemory:
         self.frame = (
             torch.zeros((memory_size, num_envs, 3, 84, 84))
             .type(torch.uint8)
-            .to(torch_device())
+            .to(device())
         )
         self.time = torch.zeros((memory_size, num_envs))
         self.key = torch.zeros((memory_size, num_envs))
         self.reward = torch.zeros((memory_size, num_envs))
         self.done_state = torch.zeros((memory_size, num_envs))
         self.policy_values = torch.zeros((memory_size, action_size, num_envs)).to(
-            torch_device()
+            device()
         )
-        self.value = torch.zeros((memory_size, num_envs)).to(torch_device())
+        self.value = torch.zeros((memory_size, num_envs)).to(device())
         self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(
             torch.uint8
         )
         self.q_aux = torch.zeros((memory_size, num_envs, 20, 20))
         self.action_indices = torch.zeros((memory_size, action_size, num_envs)).to(
-            torch_device()
+            device()
         )
         self.reward_action = torch.zeros((memory_size, action_size + 1, num_envs)).to(
-            torch_device()
+            device()
         )
 
     def mean_reward(self):

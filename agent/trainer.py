@@ -1,9 +1,10 @@
+import os
 import torch
-import numpy as np
 
 from tqdm import tqdm
 
-from agent.utils import torch_device
+from agent.definitions import MODEL_PATH
+from agent.utils import device
 
 
 class Trainer:
@@ -45,15 +46,29 @@ class Trainer:
         return self.distribution(actions).sample()
 
     def train(self):
-        for timestep in range(0, self.total_timesteps, self.experience_history_size):
-            self._fill_experience(timestep, len(self.action_space))
-            self._update_observations(len(self.action_space))
+        num_of_updates = self.total_timesteps // self.experience_history_size
+        action_size = len(self.action_space)
+
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optim, lr_lambda=lambda step: (num_of_updates - step) / num_of_updates
+        )
+
+        for timestep in range(num_of_updates):
+            self._fill_experience(timestep, action_size)
+            self._update_observations(action_size)
+            lr_scheduler.step()
             print(
                 "Mean reward per episode: {:.2f}".format(
                     self.experience_memory.mean_reward()
                 )
             )
             self.experience_memory.empty()
+            if timestep % 50 == 0:
+                path = os.path.join(MODEL_PATH, "model_{}".format(timestep))
+                torch.save(self.agent_network, path)
+
+    def _lr(self, lr_scheduler):
+        return lr_scheduler.get_lr()
 
     def _fill_experience(self, timestep, action_size):
         for step in tqdm(range(self.experience_history_size)):
@@ -61,7 +76,7 @@ class Trainer:
                 if not timestep:
                     old_state, key, old_time = self.env.reset()
                     reward_action = torch.zeros((self.num_envs, action_size + 1)).to(
-                        torch_device()
+                        device()
                     )
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action
@@ -126,7 +141,7 @@ class Trainer:
                 pc_returns = self.experience_memory.compute_pc_returns(
                     q_auxes[env], rewards[env], pixel_controls[env]
                 )
-                returns = torch.Tensor(returns).to(torch_device())
+                returns = torch.Tensor(returns).to(device())
                 adv = returns - values[env]
 
                 batch_advantages.append(adv)
@@ -141,8 +156,8 @@ class Trainer:
             new_value, policy_acts, _ = self.agent_network.act(states, reward_actions)
             q_aux, _ = self.agent_network.pixel_control_act(states, reward_actions)
 
-            returns = torch.cat(batch_returns, dim=0).to(torch_device())
-            pc_returns = torch.cat(batch_pc_returns, dim=0).to(torch_device())
+            returns = torch.cat(batch_returns, dim=0).to(device())
+            pc_returns = torch.cat(batch_pc_returns, dim=0).to(device())
 
             a2c_loss, policy_loss, value_loss, entropy = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices

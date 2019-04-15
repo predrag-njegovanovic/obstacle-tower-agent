@@ -8,6 +8,7 @@ __pycache__/
 
 # Project specific
 /ObstacleTower
+/models/*
 
 # Distribution / packaging
 .Python

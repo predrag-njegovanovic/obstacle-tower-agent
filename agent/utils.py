@@ -20,5 +20,5 @@ def create_action_space():
     return action_space
 
 
-def torch_device():
+def device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
