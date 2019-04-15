@@ -57,7 +57,9 @@ class Trainer:
 
         for timestep in range(num_of_updates):
             self._fill_experience(timestep, action_size)
-            pi_loss, v_loss, entropy, pc_loss = self._update_observations(action_size)
+            pi_loss, v_loss, entropy, pc_loss, vr_loss = self._update_observations(
+                action_size
+            )
             lr_scheduler.step()
             mean_reward = self.experience_memory.mean_reward()
 
@@ -66,6 +68,7 @@ class Trainer:
             self.writer.add_scalar("tower/value_loss", torch.mean(v_loss), timestep)
             self.writer.add_scalar("tower/entropy_loss", torch.mean(entropy), timestep)
             self.writer.add_scalar("tower/pc_loss", torch.mean(pc_loss), timestep)
+            self.writer.add_scalar("tower/vr_loss", torch.mean(vr_loss), timestep)
 
             self.experience_memory.empty()
             if timestep % 50 == 0:
@@ -137,6 +140,7 @@ class Trainer:
         value_loss = torch.zeros(epoches)
         policy_loss = torch.zeros(epoches)
         entropy_loss = torch.zeros(epoches)
+        value_replay_loss = torch.zeros(epoches)
 
         for i in tqdm(range(epoches)):
             exp_batches = self.experience_memory.sample_observations(self.batch_size)
@@ -144,9 +148,10 @@ class Trainer:
                 exp_batches
             )
 
-            batch_advantages = []
             batch_returns = []
+            batch_v_returns = []
             batch_pc_returns = []
+            batch_advantages = []
 
             for env in range(self.num_envs):
                 returns = self.experience_memory.compute_returns(
@@ -155,11 +160,15 @@ class Trainer:
                 pc_returns = self.experience_memory.compute_pc_returns(
                     q_auxes[env], rewards[env], pixel_controls[env]
                 )
+                v_returns = self.experience_memory.compute_v_returns(
+                    rewards[env], values[env]
+                )
                 returns = torch.Tensor(returns).to(device())
                 adv = returns - values[env]
 
                 batch_advantages.append(adv)
                 batch_returns.append(returns)
+                batch_v_returns.append(v_returns)
                 batch_pc_returns.append(pc_returns)
 
             advantage = torch.cat(batch_advantages, dim=0).unsqueeze(-1)
@@ -172,6 +181,7 @@ class Trainer:
 
             returns = torch.cat(batch_returns, dim=0).to(device())
             pc_returns = torch.cat(batch_pc_returns, dim=0).to(device())
+            v_returns = torch.cat(batch_v_returns, dim=0).to(device())
 
             a2c_loss, pi_loss, v_loss, entropy = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices
@@ -181,12 +191,15 @@ class Trainer:
                 action_size, action_indices, q_aux, pc_returns
             )
 
-            loss = a2c_loss + pixel_control_loss
+            v_loss = self.agent_network.v_loss(v_returns, new_value)
+
+            loss = a2c_loss + v_loss + pixel_control_loss
 
             value_loss[i].copy_(v_loss)
             policy_loss[i].copy_(pi_loss)
             entropy_loss[i].copy_(entropy)
             pc_loss[i].copy_(pixel_control_loss)
+            value_replay_loss.copy_(v_loss)
 
             self.optim.zero_grad()
             loss.backward()

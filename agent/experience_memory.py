@@ -186,6 +186,18 @@ class ExperienceMemory:
 
         return pc_returns
 
+    def compute_v_returns(self, rewards, values, gamma=1.0):
+        num_steps = values.shape[0]
+
+        v_returns = torch.zeros((num_steps))
+        if rewards[-1]:
+            v_returns = values[-1]
+
+        for step in reversed(range(num_steps - 1)):
+            v_returns[step] = rewards[step] + gamma * v_returns[step + 1]
+
+        return v_returns
+
     def _calculate_reward(self, reward, new_time, old_time, key):
         return reward + self._time_normalize(new_time, old_time) + 0.2 * key
 

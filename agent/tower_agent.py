@@ -96,6 +96,10 @@ class TowerAgent(torch.nn.Module):
         pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns * pc_q_aux_sum, 2))
         return pc_loss
 
+    def v_loss(self, v_returns, new_value):
+        v_loss = torch.mean(torch.pow(v_returns - new_value, 2))
+        return v_loss
+
     def policy_loss(self, policy_logs, adventage, action_indices):
         pi_logs = torch.sum(torch.mul(policy_logs, action_indices), 1)
         return -torch.mean(adventage * pi_logs)
