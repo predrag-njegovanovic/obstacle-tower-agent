@@ -164,6 +164,8 @@ class Trainer:
                     rewards[env], values[env]
                 )
                 returns = torch.Tensor(returns).to(device())
+                v_returns = torch.Tensor(v_returns).to(device())
+
                 adv = returns - values[env]
 
                 batch_advantages.append(adv)
@@ -205,4 +207,4 @@ class Trainer:
             loss.backward()
             self.optim.step()
             # ppo loss
-        return policy_loss, value_loss, entropy_loss, pc_loss
+        return policy_loss, value_loss, entropy_loss, pc_loss, value_replay_loss

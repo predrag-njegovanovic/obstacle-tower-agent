@@ -21,7 +21,7 @@ ACTION_JUMP = [0, 1]
 
 # Training parameters
 NUM_ENVS = multiprocessing.cpu_count()
-EPOCHES = 32
+EPOCHES = 64
 BATCH_SIZE = 20
 TIMESTAMPS = 1000000
 OBSERVATION_SIZE = 2000
