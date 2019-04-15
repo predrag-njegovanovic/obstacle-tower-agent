@@ -3,7 +3,7 @@ import torch
 from agent import base_networks
 
 
-class TowerAgent:
+class TowerAgent(torch.nn.Module):
     def __init__(
         self,
         action_size,
@@ -15,6 +15,8 @@ class TowerAgent:
         value_coeff=0.5,
         pc_lambda=0.99,
     ):
+
+        super(TowerAgent, self).__init__()
 
         self.conv_network = base_networks.ConvNetwork(
             first_layer_filters, second_layer_filters, conv_output_size

@@ -2,6 +2,7 @@ import os
 import torch
 
 from tqdm import tqdm
+from tensorboardX import SummaryWriter
 
 from agent.definitions import MODEL_PATH
 from agent.utils import device
@@ -33,6 +34,7 @@ class Trainer:
         self.total_timesteps = total_timesteps
         self.distribution = torch.distributions.Categorical
         self.lr = learning_rate
+        self.writer = SummaryWriter()
         self.optim = torch.optim.Adam(
             self.agent_network.parameters(), lr=self.lr, eps=1e-5
         )
@@ -55,17 +57,22 @@ class Trainer:
 
         for timestep in range(num_of_updates):
             self._fill_experience(timestep, action_size)
-            self._update_observations(action_size)
+            pi_loss, v_loss, entropy, pc_loss = self._update_observations(action_size)
             lr_scheduler.step()
-            print(
-                "Mean reward per episode: {:.2f}".format(
-                    self.experience_memory.mean_reward()
-                )
-            )
+            mean_reward = self.experience_memory.mean_reward()
+
+            self.writer.add_scalar("tower/mean_reward", mean_reward, timestep)
+            self.writer.add_scalar("tower/policy_loss", torch.mean(pi_loss), timestep)
+            self.writer.add_scalar("tower/value_loss", torch.mean(v_loss), timestep)
+            self.writer.add_scalar("tower/entropy_loss", torch.mean(entropy), timestep)
+            self.writer.add_scalar("tower/pc_loss", torch.mean(pc_loss), timestep)
+
             self.experience_memory.empty()
             if timestep % 50 == 0:
-                path = os.path.join(MODEL_PATH, "model_{}".format(timestep))
-                torch.save(self.agent_network, path)
+                path = os.path.join(MODEL_PATH, "model_{}.bin".format(timestep))
+                torch.save(self.agent_network.state_dict(), path)
+
+        self.writer.close()
 
     def _lr(self, lr_scheduler):
         return lr_scheduler.get_lr()
@@ -124,7 +131,14 @@ class Trainer:
                 timestep += 1
 
     def _update_observations(self, action_size):
-        for _ in tqdm(range(self.num_of_epoches)):
+        epoches = self.num_of_epoches
+
+        pc_loss = torch.zeros(epoches)
+        value_loss = torch.zeros(epoches)
+        policy_loss = torch.zeros(epoches)
+        entropy_loss = torch.zeros(epoches)
+
+        for i in tqdm(range(epoches)):
             exp_batches = self.experience_memory.sample_observations(self.batch_size)
             states, reward_actions, action_indices, rewards, values, q_auxes, pixel_controls = (
                 exp_batches
@@ -159,16 +173,23 @@ class Trainer:
             returns = torch.cat(batch_returns, dim=0).to(device())
             pc_returns = torch.cat(batch_pc_returns, dim=0).to(device())
 
-            a2c_loss, policy_loss, value_loss, entropy = self.agent_network.a2c_loss(
+            a2c_loss, pi_loss, v_loss, entropy = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices
             )
-            pc_loss = self.agent_network.pc_loss(
+
+            pixel_control_loss = self.agent_network.pc_loss(
                 action_size, action_indices, q_aux, pc_returns
             )
 
-            loss = a2c_loss + pc_loss
+            loss = a2c_loss + pixel_control_loss
+
+            value_loss[i].copy_(v_loss)
+            policy_loss[i].copy_(pi_loss)
+            entropy_loss[i].copy_(entropy)
+            pc_loss[i].copy_(pixel_control_loss)
 
             self.optim.zero_grad()
             loss.backward()
             self.optim.step()
             # ppo loss
+        return policy_loss, value_loss, entropy_loss, pc_loss
