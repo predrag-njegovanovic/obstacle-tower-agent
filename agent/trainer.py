@@ -72,7 +72,7 @@ class Trainer:
 
             lr_scheduler.step()
             self.experience_memory.empty()
-            if timestep % 50 == 0:
+            if timestep % 100 == 0:
                 path = os.path.join(MODEL_PATH, "model_{}.bin".format(timestep))
                 torch.save(self.agent_network.state_dict(), path)
 

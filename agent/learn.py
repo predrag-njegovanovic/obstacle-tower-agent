@@ -11,7 +11,7 @@ from agent.parallel_environment import ParallelEnvironment
 from agent.utils import create_action_space, log_uniform
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(desciption="Train Obstacle Tower Agent")
+    parser = argparse.ArgumentParser(description="Train Obstacle Tower Agent")
 
     parser.add_argument(
         "--num_envs",
@@ -119,5 +119,6 @@ if __name__ == "__main__":
         args.epoches,
         args.timesteps,
         learning_rate,
+        device,
     )
     trainer.train()

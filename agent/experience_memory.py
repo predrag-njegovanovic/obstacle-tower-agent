@@ -5,7 +5,7 @@ import numpy as np
 
 class ExperienceMemory:
     def __init__(self, num_envs, memory_size, action_size, device):
-        self._init_memory(num_envs, memory_size, action_size)
+        self._init_memory(num_envs, memory_size, action_size, device)
         self.memory_size = memory_size
         self.action_size = action_size
         self.num_envs = num_envs
@@ -21,29 +21,27 @@ class ExperienceMemory:
     def last_hidden_state(self, value):
         self._last_hidden_state = value
 
-    def _init_memory(self, num_envs, memory_size, action_size):
+    def _init_memory(self, num_envs, memory_size, action_size, device):
         self.frame = (
-            torch.zeros((memory_size, num_envs, 3, 84, 84))
-            .type(torch.uint8)
-            .to(self.device)
+            torch.zeros((memory_size, num_envs, 3, 84, 84)).type(torch.uint8).to(device)
         )
         self.time = torch.zeros((memory_size, num_envs))
         self.key = torch.zeros((memory_size, num_envs))
         self.reward = torch.zeros((memory_size, num_envs))
         self.done_state = torch.zeros((memory_size, num_envs))
         self.policy_values = torch.zeros((memory_size, action_size, num_envs)).to(
-            self.device
+            device
         )
-        self.value = torch.zeros((memory_size, num_envs)).to(self.device)
+        self.value = torch.zeros((memory_size, num_envs)).to(device)
         self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(
             torch.uint8
         )
         self.q_aux = torch.zeros((memory_size, num_envs, 20, 20))
         self.action_indices = torch.zeros((memory_size, action_size, num_envs)).to(
-            self.device()
+            device
         )
         self.reward_action = torch.zeros((memory_size, action_size + 1, num_envs)).to(
-            self.device
+            device
         )
 
     def mean_reward(self):
