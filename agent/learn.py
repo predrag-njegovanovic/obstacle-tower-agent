@@ -20,15 +20,15 @@ if __name__ == "__main__":
     )
 
     learning_rate = log_uniform(1e-4, 5e-4)
-    entropy_coeff = log_uniform(1e-4, 1e-3)
+    entropy_coeff = log_uniform(1e-5, 1e-4)
     pc_lambda = log_uniform(0.01, 0.1)
 
     agent = TowerAgent(
         action_size,
-        config["first_layer"],
-        config["second_layer"],
-        config["conv_output"],
-        config["hidden_state_size"],
+        config["first_filters"],
+        config["second_filters"],
+        config["convolution_output"],
+        config["hidden_state"],
         entropy_coeff=entropy_coeff,
         pc_lambda=pc_lambda,
     )

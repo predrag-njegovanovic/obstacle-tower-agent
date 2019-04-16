@@ -27,8 +27,8 @@ TIMESTAMPS = 1000000
 OBSERVATION_SIZE = 2000
 
 network_params = {
-    "first_layer": 16,
-    "second_layer": 32,
-    "conv_output": 256,
-    "hidden_state_size": 256,
+    "first_filters": 16,
+    "second_filters": 32,
+    "convolution_output": 256,
+    "hidden_state": 256,
 }

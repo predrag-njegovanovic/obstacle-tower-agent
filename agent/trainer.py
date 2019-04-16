@@ -60,7 +60,6 @@ class Trainer:
             pi_loss, v_loss, entropy, pc_loss, vr_loss = self._update_observations(
                 action_size
             )
-            lr_scheduler.step()
             mean_reward = self.experience_memory.mean_reward()
 
             self.writer.add_scalar("tower/mean_reward", mean_reward, timestep)
@@ -70,6 +69,7 @@ class Trainer:
             self.writer.add_scalar("tower/pc_loss", torch.mean(pc_loss), timestep)
             self.writer.add_scalar("tower/vr_loss", torch.mean(vr_loss), timestep)
 
+            lr_scheduler.step()
             self.experience_memory.empty()
             if timestep % 50 == 0:
                 path = os.path.join(MODEL_PATH, "model_{}.bin".format(timestep))
