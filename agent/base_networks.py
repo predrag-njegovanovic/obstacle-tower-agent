@@ -78,7 +78,7 @@ class PolicyNetwork(torch.nn.Module):
         self.fully_connected = torch.nn.Linear(
             in_features=256, out_features=action_size
         )
-        self.policy = torch.nn.LogSoftmax(dim=0)
+        self.policy = torch.nn.LogSoftmax(dim=1)
 
     def forward(self, inputs):
         """

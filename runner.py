@@ -11,7 +11,7 @@ from agent.parallel_environment import prepare_state
 
 
 def greedy_policy(action_space, policy):
-    value, index = torch.max(policy, 0)
+    index = torch.argmax(policy)
     return action_space[index], index
 
 
@@ -29,13 +29,19 @@ if __name__ == "__main__":
         default=0,
         help="Environment can use seed. Default seed is 0.",
     )
+    parser.add_argument(
+        "--use_cuda",
+        type=bool,
+        default=True,
+        help="Use GPU for inference phase. This will transfer model and all tensors to VRAM.",
+    )
 
     args = parser.parse_args()
 
     env_path = definitions.OBSTACLE_TOWER_PATH
     model_name = os.path.join(definitions.MODEL_PATH, args.model_name)
 
-    env = ObstacleTowerEnv(env_path, realtime_mode=True)
+    env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True)
     env.seed(args.seed)
 
     config = definitions.network_params
@@ -50,23 +56,37 @@ if __name__ == "__main__":
         config["hidden_state"],
     )
 
-    agent.load_state_dict(model_name)
-    agent.to_cuda()
+    agent.load_state_dict(torch.load(model_name))
 
-    frame, _, _ = env.reset()
-    state = prepare_state(frame)
-    action_encoding = torch.zeros((action_size, 1)).cuda()
-    reward_action = torch.zeros((1, action_size + 1)).cuda()
+    if args.use_cuda:
+        agent.to_cuda()
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
 
+    frame, key, time = env.reset()
+    state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
+
+    action_encoding = torch.zeros((action_size, 1)).to(device)
+    reward_action = torch.zeros((1, action_size + 1)).to(device)
+
+    # Bootstrap initial state and reward_action vector
     value, policy, rhs = agent.act(state, reward_action)
     action, action_index = greedy_policy(actions, policy)
     action_encoding[action_index] = 1
     while True:
-        frame, _, _, reward, done = env.step(action)
-        state = prepare_state(frame)
+        obs, reward, done, _ = env.step(action)
+        frame, _, _ = obs
+        state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
         if done:
             break
 
-        reward_action.copy_(torch.cat((action_encoding, reward), dim=0))
+        reward_tensor = torch.Tensor([reward]).unsqueeze(1).to(device)
+        temporary_tensor = torch.cat((action_encoding, reward_tensor))
+        reward_action.copy_(temporary_tensor.transpose_(0, 1))
+
         value, policy, rhs = agent.act(state, reward_action, rhs)
         action, action_index = greedy_policy(actions, policy)
+
+        action_encoding = torch.zeros((action_size, 1)).cuda()
+        action_encoding[action_index] = 1
