@@ -2,17 +2,16 @@ import torch
 import random
 import numpy as np
 
-from agent.utils import device
-
 
 class ExperienceMemory:
-    def __init__(self, num_envs, memory_size, action_size):
+    def __init__(self, num_envs, memory_size, action_size, device):
         self._init_memory(num_envs, memory_size, action_size)
         self.memory_size = memory_size
         self.action_size = action_size
         self.num_envs = num_envs
         self.memory_pointer = 0
         self._last_hidden_state = None
+        self.device = device
 
     @property
     def last_hidden_state(self):
@@ -26,25 +25,25 @@ class ExperienceMemory:
         self.frame = (
             torch.zeros((memory_size, num_envs, 3, 84, 84))
             .type(torch.uint8)
-            .to(device())
+            .to(self.device)
         )
         self.time = torch.zeros((memory_size, num_envs))
         self.key = torch.zeros((memory_size, num_envs))
         self.reward = torch.zeros((memory_size, num_envs))
         self.done_state = torch.zeros((memory_size, num_envs))
         self.policy_values = torch.zeros((memory_size, action_size, num_envs)).to(
-            device()
+            self.device
         )
-        self.value = torch.zeros((memory_size, num_envs)).to(device())
+        self.value = torch.zeros((memory_size, num_envs)).to(self.device)
         self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(
             torch.uint8
         )
         self.q_aux = torch.zeros((memory_size, num_envs, 20, 20))
         self.action_indices = torch.zeros((memory_size, action_size, num_envs)).to(
-            device()
+            self.device()
         )
         self.reward_action = torch.zeros((memory_size, action_size + 1, num_envs)).to(
-            device()
+            self.device
         )
 
     def mean_reward(self):

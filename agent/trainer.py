@@ -5,7 +5,6 @@ from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
 from agent.definitions import MODEL_PATH
-from agent.utils import device
 
 
 class Trainer:
@@ -21,6 +20,7 @@ class Trainer:
         num_of_epoches,
         total_timesteps,
         learning_rate,
+        device,
     ):
 
         self.env = parallel_environment
@@ -38,6 +38,7 @@ class Trainer:
         self.optim = torch.optim.Adam(
             self.agent_network.parameters(), lr=self.lr, eps=1e-5
         )
+        self.device = device
 
     def sample_action(self, actions):
         """
@@ -86,7 +87,7 @@ class Trainer:
                 if not timestep:
                     old_state, key, old_time = self.env.reset()
                     reward_action = torch.zeros((self.num_envs, action_size + 1)).to(
-                        device()
+                        self.device
                     )
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action
@@ -163,8 +164,8 @@ class Trainer:
                 v_returns = self.experience_memory.compute_v_returns(
                     rewards[env], values[env]
                 )
-                returns = torch.Tensor(returns).to(device())
-                v_returns = torch.Tensor(v_returns).to(device())
+                returns = torch.Tensor(returns).to(self.device)
+                v_returns = torch.Tensor(v_returns).to(self.device)
 
                 adv = returns - values[env]
 
@@ -181,9 +182,9 @@ class Trainer:
             new_value, policy_acts, _ = self.agent_network.act(states, reward_actions)
             q_aux, _ = self.agent_network.pixel_control_act(states, reward_actions)
 
-            returns = torch.cat(batch_returns, dim=0).to(device())
-            pc_returns = torch.cat(batch_pc_returns, dim=0).to(device())
-            v_returns = torch.cat(batch_v_returns, dim=0).to(device())
+            returns = torch.cat(batch_returns, dim=0).to(self.device)
+            pc_returns = torch.cat(batch_pc_returns, dim=0).to(self.device)
+            v_returns = torch.cat(batch_v_returns, dim=0).to(self.device)
 
             a2c_loss, pi_loss, v_loss, entropy = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices

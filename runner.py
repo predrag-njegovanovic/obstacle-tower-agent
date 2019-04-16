@@ -33,7 +33,7 @@ if __name__ == "__main__":
         "--use_cuda",
         type=bool,
         default=True,
-        help="Use GPU for inference phase. This will transfer model and all tensors to VRAM.",
+        help="Use GPU for inference phase. This will transfer model and tensors to VRAM.",
     )
 
     args = parser.parse_args()
