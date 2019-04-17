@@ -31,10 +31,12 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
 
                 cumulative_reward += reward
 
-            connection.send((prepare_state(state), keys, time, cumulative_reward, done))
+            connection.send(
+                (prepare_state(state).tolist(), keys, time, cumulative_reward, done)
+            )
         elif command == "reset":
             state, keys, time = obstacle_tower.reset()
-            connection.send((prepare_state(state), keys, time))
+            connection.send((prepare_state(state).tolist(), keys, time))
         elif command == "close":
             connection.close()
 
