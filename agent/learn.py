@@ -75,6 +75,9 @@ if __name__ == "__main__":
         default=64,
         help="Number of updates once the experience memory is filled.",
     )
+    parser.add_argument(
+        "--ppo", type=bool, default=False, help="Use PPO algorithm for training."
+    )
     parser.add_argument("--use_cuda", type=bool, default=True, help="Use GPU training.")
 
     args = parser.parse_args()
@@ -120,5 +123,6 @@ if __name__ == "__main__":
         args.timesteps,
         learning_rate,
         device,
+        args.ppo,
     )
     trainer.train()

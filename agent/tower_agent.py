@@ -14,6 +14,7 @@ class TowerAgent(torch.nn.Module):
         entropy_coeff=0.01,
         value_coeff=0.5,
         pc_lambda=0.99,
+        ppo_epsilon=0.2,
     ):
 
         super(TowerAgent, self).__init__()
@@ -31,6 +32,7 @@ class TowerAgent(torch.nn.Module):
         self.entropy_coeff = entropy_coeff
         self.value_coeff = value_coeff
         self.pc_lambda = pc_lambda
+        self.ppo_epsilon = ppo_epsilon
 
     def to_cuda(self):
         self.conv_network.cuda()
@@ -76,13 +78,26 @@ class TowerAgent(torch.nn.Module):
         q_aux, q_aux_max = self.pc_network(features)
         return q_aux, q_aux_max
 
+    def ppo_loss(self, old_policy, policy, advantage, returns, values, action_indices):
+        policy_loss = self.ppo_policy_loss(
+            old_policy, policy, advantage, action_indices
+        )
+        value_loss = self.value_loss(returns, values)
+        entropy = self.entropy(policy)
+
+        loss = (
+            policy_loss + self.value_coeff * value_loss - self.entropy_coeff * entropy
+        )
+
+        return loss, policy_loss, value_loss, entropy
+
     def a2c_loss(self, policy_logs, advantage, returns, values, action_indices):
         policy_loss = self.policy_loss(policy_logs, advantage, action_indices)
         value_loss = self.value_loss(returns, values)
         entropy = self.entropy(policy_logs)
 
         loss = (
-            policy_loss + self.value_coeff * value_loss + self.entropy_coeff * entropy
+            policy_loss + self.value_coeff * value_loss - self.entropy_coeff * entropy
         )
         return loss, policy_loss, value_loss, entropy
 
@@ -104,6 +119,18 @@ class TowerAgent(torch.nn.Module):
         pi_logs = torch.sum(torch.mul(policy_logs, action_indices), 1)
         return -torch.mean(adventage * pi_logs)
 
+    def ppo_policy_loss(self, old_policy, policy, advantage, action_indices):
+        pi_logs = torch.sum(torch.mul(policy, action_indices), 1)
+        old_pi_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
+
+        ratio = torch.exp(pi_logs - old_pi_logs)
+        ratio_term = ratio * advantage
+        clamp = torch.clamp(ratio, 1 - self.ppo_epsilon, 1 + self.ppo_epsilon)
+        clamp_term = clamp * advantage
+
+        policy_loss = -torch.min(ratio_term, clamp_term).mean()
+        return policy_loss
+
     def value_loss(self, returns, values):
         return torch.mean(torch.pow(returns - values, 2))
 
@@ -111,4 +138,4 @@ class TowerAgent(torch.nn.Module):
         policy = torch.log(torch.clamp(policy_logs, 1e-20, 1.0))
 
         # try with torch.sum instead of torch.mean
-        return -torch.mean(policy_logs * policy)
+        return torch.mean(policy_logs * policy)

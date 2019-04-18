@@ -99,6 +99,7 @@ class ExperienceMemory:
     def sample_observations(self, sequence):
         batched_value = []
         batched_q_aux = []
+        batched_policy = []
         batched_states = []
         batched_reward = []
         batched_pixel_control = []
@@ -124,6 +125,7 @@ class ExperienceMemory:
                     pixel_controls = self.pixel_change[start : start + i, env, :, :]
                     action_indices = self.action_indices[start : start + i, :, env]
                     q_auxes = self.q_aux[start : start + i, env, :, :]
+                    policies = self.policy_values[start : start + i, :, env]
                     done_flag = True
                     break
 
@@ -135,11 +137,13 @@ class ExperienceMemory:
                 pixel_controls = self.pixel_change[start : start + sequence, env, :, :]
                 action_indices = self.action_indices[start : start + sequence, :, env]
                 q_auxes = self.q_aux[start : start + sequence, env, :, :]
+                policies = self.policy_values[start : start + sequence, :, env]
 
             batched_value.append(values)
             batched_q_aux.append(q_auxes)
             batched_states.append(states)
             batched_reward.append(rewards)
+            batched_policy.append(policies)
             batched_pixel_control.append(pixel_controls)
             batched_reward_actions.append(reward_actions)
             batched_action_indices.append(action_indices)
@@ -148,6 +152,7 @@ class ExperienceMemory:
             torch.cat(batched_states, dim=0),
             torch.cat(batched_reward_actions, dim=0),
             torch.cat(batched_action_indices, dim=0),
+            torch.cat(batched_policy, dim=0),
             batched_reward,
             batched_value,
             batched_q_aux,
