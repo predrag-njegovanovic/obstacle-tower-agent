@@ -239,4 +239,5 @@ class ExperienceMemory:
         Concatenate one-hot action representation from last state
         and current state reward.
         """
-        return torch.cat((action_encoding, reward.unsqueeze(0)), dim=0)
+        clipped_reward = torch.clamp(reward, 1, 0)
+        return torch.cat((action_encoding, clipped_reward.unsqueeze(0)), dim=0)
