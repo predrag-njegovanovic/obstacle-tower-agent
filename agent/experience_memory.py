@@ -200,11 +200,15 @@ class ExperienceMemory:
         """
         Scale time difference between two steps to [0, 1] range.
         """
-        difference = new_time - old_time
-        if reward:
-            return difference / 1000
-        else:
-            return difference / 10000
+        diff = torch.zeros(new_time.shape)
+        for index, _ in enumerate(reward):
+            difference = new_time[index] - old_time[index]
+            if reward[index]:
+                diff[index] = difference / 1000
+            else:
+                diff[index] = difference / 10000
+
+        return diff
 
     def _subsample(self, frame_mean_diff, piece_size=4):
         shapes = frame_mean_diff.shape
