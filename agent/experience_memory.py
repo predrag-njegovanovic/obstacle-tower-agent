@@ -107,37 +107,30 @@ class ExperienceMemory:
         batched_reward_actions = []
 
         for env in range(self.num_envs):
-            done_flag = False
-            start = random.randint(0, self.memory_size - sequence - 2)
+            sample_index = 0
+            start = random.randint(0, self.memory_size - sequence - 1)
 
-            # Check if there are two consecutive terminate states
             if self.done_state[start, env]:
                 start += 1
-                if self.done_state[start, env]:
-                    start += 1
 
             for i in range(sequence):
                 if self.done_state[start + i, env]:
-                    states = self.frame[start : start + i, env, :, :, :]
-                    reward_actions = self.reward_action[start : start + i, :, env]
-                    rewards = self.reward[start : start + i, env]
-                    values = self.value[start : start + i, env]
-                    pixel_controls = self.pixel_change[start : start + i, env, :, :]
-                    action_indices = self.action_indices[start : start + i, :, env]
-                    q_auxes = self.q_aux[start : start + i, env, :, :]
-                    policies = self.policy_values[start : start + i, :, env]
-                    done_flag = True
+                    sample_index = start + i - 1
                     break
 
-            if not done_flag:
-                states = self.frame[start : start + sequence, env, :, :, :]
-                reward_actions = self.reward_action[start : start + sequence, :, env]
-                rewards = self.reward[start : start + sequence, env]
-                values = self.value[start : start + sequence, env]
-                pixel_controls = self.pixel_change[start : start + sequence, env, :, :]
-                action_indices = self.action_indices[start : start + sequence, :, env]
-                q_auxes = self.q_aux[start : start + sequence, env, :, :]
-                policies = self.policy_values[start : start + sequence, :, env]
+            sample_index = sequence
+
+            if sample_index <= start:
+                continue
+
+            states = self.frame[start:sample_index, env, :, :, :]
+            reward_actions = self.reward_action[start:sample_index, :, env]
+            rewards = self.reward[start:sample_index, env]
+            values = self.value[start:sample_index, env]
+            pixel_controls = self.pixel_change[start:sample_index, env, :, :]
+            action_indices = self.action_indices[start:sample_index, :, env]
+            q_auxes = self.q_aux[start:sample_index, env, :, :]
+            policies = self.policy_values[start:sample_index, :, env]
 
             batched_value.append(values)
             batched_q_aux.append(q_auxes)
@@ -201,14 +194,17 @@ class ExperienceMemory:
         return v_returns
 
     def _calculate_reward(self, reward, new_time, old_time, key):
-        return reward + self._time_normalize(new_time, old_time) + 0.2 * key
+        return reward + self._time_normalize(reward, new_time, old_time) + 0.2 * key
 
-    def _time_normalize(self, new_time, old_time):
+    def _time_normalize(self, reward, new_time, old_time):
         """
         Scale time difference between two steps to [0, 1] range.
         """
         difference = new_time - old_time
-        return difference / 1000
+        if reward:
+            return difference / 1000
+        else:
+            return difference / 10000
 
     def _subsample(self, frame_mean_diff, piece_size=4):
         shapes = frame_mean_diff.shape

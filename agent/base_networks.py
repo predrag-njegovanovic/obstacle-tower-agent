@@ -78,14 +78,17 @@ class PolicyNetwork(torch.nn.Module):
         self.fully_connected = torch.nn.Linear(
             in_features=256, out_features=action_size
         )
-        self.policy = torch.nn.LogSoftmax(dim=1)
+
+        self.log_policy = torch.nn.LogSoftmax(dim=1)
 
     def forward(self, inputs):
         """
         Return Log(pi).
         """
         fc_inputs = inputs.view(inputs.size(0), -1)
-        return self.policy(self.fully_connected(fc_inputs))
+        fc_out = self.fully_connected(fc_inputs)
+        log_policy = self.log_policy(fc_out)
+        return log_policy
 
 
 class PixelControlNetwork(torch.nn.Module):

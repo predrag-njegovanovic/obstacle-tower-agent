@@ -41,14 +41,14 @@ class TowerAgent(torch.nn.Module):
         self.value.cuda()
         self.policy.cuda()
 
-    def parameters(self):
-        return (
-            list(self.conv_network.parameters())
-            + list(self.lstm_network.parameters())
-            + list(self.value.parameters())
-            + list(self.policy.parameters())
-            + list(self.pc_network.parameters())
-        )
+    # def parameters(self):
+    #     return (
+    #         list(self.conv_network.parameters())
+    #         + list(self.lstm_network.parameters())
+    #         + list(self.value.parameters())
+    #         + list(self.policy.parameters())
+    #         + list(self.pc_network.parameters())
+    #     )
 
     def act(self, state, reward_and_last_action, last_hidden_state=None):
         """
@@ -135,7 +135,7 @@ class TowerAgent(torch.nn.Module):
         return torch.mean(torch.pow(returns - values, 2))
 
     def entropy(self, policy_logs):
-        policy = torch.log(torch.clamp(policy_logs, 1e-20, 1.0))
+        policy = torch.exp(policy_logs)
 
         # try with torch.sum instead of torch.mean
         return torch.mean(policy_logs * policy)
