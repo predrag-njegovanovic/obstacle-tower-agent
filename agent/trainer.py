@@ -17,6 +17,7 @@ class Trainer:
         num_envs,
         experience_history_size,
         batch_size,
+        sequence_length,
         num_of_epoches,
         total_timesteps,
         learning_rate,
@@ -31,6 +32,7 @@ class Trainer:
         self.num_envs = num_envs
         self.experience_history_size = experience_history_size
         self.batch_size = batch_size
+        self.sequence_length = sequence_length
         self.num_of_epoches = num_of_epoches
         self.total_timesteps = total_timesteps
         self.distribution = torch.distributions.Categorical
@@ -171,7 +173,7 @@ class Trainer:
             reward_action = torch.zeros((self.num_envs, action_size + 1)).to(
                 self.device
             )
-            for _ in range(self.batch_size):
+            for step_num in range(self.batch_size):
                 with torch.no_grad():
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action, last_rhs
@@ -184,7 +186,7 @@ class Trainer:
                     if len(torch.nonzero(reward)):
                         counter += 1
                     if len(torch.nonzero(done)) > 0:
-                        print("Here at i = {}".format(i))
+                        print("Done at step = {}".format(step_num))
                         break
 
                     action_encoding = torch.zeros((action_size, self.num_envs))
@@ -250,9 +252,9 @@ class Trainer:
             value_replay_loss[i].copy_(v_loss)
             door_hit[i] = counter
 
-            print("Epoche: {} and number of passings: {}".format(i, counter))
+            print("Epoch: {} and number of passings: {}".format(i, counter))
             print(
-                "Epoche: {} and sum rewards in all envs is: {}".format(
+                "Epoch: {} and sum rewards in all envs is: {}".format(
                     i, torch.sum(rewards, dim=0)
                 )
             )
@@ -315,7 +317,7 @@ class Trainer:
         return agent_loss, pi_loss, v_loss, entropy
 
     def pc_control(self, action_size):
-        exp_batches = self.experience.sample_observations(128)
+        exp_batches = self.experience.sample_observations(self.sequence_length)
         states, reward_actions, action_indices, rewards, _, q_auxes, pixel_controls = (
             exp_batches
         )
@@ -340,7 +342,7 @@ class Trainer:
         return pc_loss
 
     def value_replay(self, action_size):
-        exp_batches = self.experience.sample_observations(128)
+        exp_batches = self.experience.sample_observations(self.sequence_length)
         states, reward_actions, _, rewards, values, _, _ = exp_batches
 
         batch_v_returns = []
