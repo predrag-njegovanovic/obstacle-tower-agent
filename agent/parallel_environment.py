@@ -20,7 +20,7 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
             cumulative_reward = 0
 
             # frame skipping
-            for _ in range(4):
+            for _ in range(2):
                 observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time = observation
 

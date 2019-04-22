@@ -41,8 +41,13 @@ class ExperienceMemory:
             device
         )
 
-    def mean_reward(self):
-        return torch.mean(self.reward).item()
+    def reward_stats(self):
+        mean = torch.mean(self.reward).item()
+        min_reward = torch.min(self.reward).item()
+        max_reward = torch.max(self.reward).item()
+        std_reward = torch.std(self.reward).item()
+
+        return min_reward, max_reward, std_reward, mean
 
     def empty(self):
         self.frame[0].copy_(self.frame[-1])
@@ -185,21 +190,21 @@ class ExperienceMemory:
         return v_returns
 
     def calculate_reward(self, reward, new_time, old_time, key):
-        return reward + self._time_normalize(reward, new_time, old_time) + 0.2 * key
-
-    def _time_normalize(self, reward, new_time, old_time):
         """
-        Scale time difference between two steps to [0, 1] range.
+        Scale time difference between two steps to [0, 1] range and add to reward.
         """
         diff = torch.zeros(new_time.shape)
         for index, _ in enumerate(reward):
-            difference = new_time[index] - old_time[index]
-            if reward[index]:
-                diff[index] = difference / 1000
-            else:
-                diff[index] = difference / 10000
+            if reward[index] == 0.1:
+                reward[index] *= 10
 
-        return diff
+            time_difference = new_time[index] - old_time[index]
+            if time_difference <= 0:
+                diff[index] = 0
+            else:
+                diff[index] = time_difference / 1000
+
+        return reward + diff + 0.2 * key
 
     def _subsample(self, frame_mean_diff, piece_size=4):
         shapes = frame_mean_diff.shape

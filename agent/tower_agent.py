@@ -41,15 +41,6 @@ class TowerAgent(torch.nn.Module):
         self.value.cuda()
         self.policy.cuda()
 
-    # def parameters(self):
-    #     return (
-    #         list(self.conv_network.parameters())
-    #         + list(self.lstm_network.parameters())
-    #         + list(self.value.parameters())
-    #         + list(self.policy.parameters())
-    #         + list(self.pc_network.parameters())
-    #     )
-
     def act(self, state, reward_and_last_action, last_hidden_state=None):
         """
         Run batch of states (3-channel images) through network to get
@@ -121,7 +112,7 @@ class TowerAgent(torch.nn.Module):
 
     def ppo_policy_loss(self, old_policy, policy, advantage, action_indices):
         pi_logs = torch.sum(torch.mul(policy, action_indices), 1)
-        old_pi_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
+        old_pi_logs = torch.sum(old_policy, 1)
 
         ratio = torch.exp(pi_logs - old_pi_logs)
         ratio_term = ratio * advantage

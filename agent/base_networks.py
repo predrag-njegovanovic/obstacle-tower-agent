@@ -43,6 +43,7 @@ class LSTMNetwork(torch.nn.Module):
         self.lstm = torch.nn.LSTM(
             input_size=input_size + action_size + 1,
             hidden_size=hidden_state_size,
+            num_layers=2,
             batch_first=True,
         )
 

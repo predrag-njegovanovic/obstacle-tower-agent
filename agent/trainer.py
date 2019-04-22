@@ -60,21 +60,33 @@ class Trainer:
 
         for timestep in range(num_of_updates):
             self._fill_experience(timestep, action_size)
-            pi_loss, v_loss, entropy, pc_loss, vr_loss = self._update_observations(
+            pi_loss, v_loss, entropy, pc_loss, vr_loss, door_hit = self._update_observations(
                 action_size
             )
-            mean_reward = self.experience.mean_reward()
+            min_reward, max_reward, std_reward, mean_reward = (
+                self.experience.reward_stats()
+            )
 
-            self.writer.add_scalar("tower/mean_reward", mean_reward, timestep)
+            self.writer.add_scalars(
+                "tower/rewards",
+                {
+                    "mean": mean_reward,
+                    "min": min_reward,
+                    "max": max_reward,
+                    "std": std_reward,
+                },
+                timestep,
+            )
             self.writer.add_scalar("tower/policy_loss", torch.mean(pi_loss), timestep)
             self.writer.add_scalar("tower/value_loss", torch.mean(v_loss), timestep)
             self.writer.add_scalar("tower/entropy_loss", torch.mean(entropy), timestep)
             self.writer.add_scalar("tower/pc_loss", torch.mean(pc_loss), timestep)
             self.writer.add_scalar("tower/vr_loss", torch.mean(vr_loss), timestep)
+            self.writer.add_scalar("tower/door_hit", torch.mean(door_hit), timestep)
 
             lr_scheduler.step()
             self.experience.empty()
-            if timestep % 250 == 0:
+            if timestep % 100 == 0:
                 name = "ppo" if self.ppo else "a2c"
                 path = os.path.join(
                     MODEL_PATH, "model_{}_{}.bin".format(name, timestep)
@@ -143,19 +155,23 @@ class Trainer:
         entropy_loss = torch.zeros(epoches)
         value_replay_loss = torch.zeros(epoches)
         pixel_control_loss = torch.zeros(epoches)
+        door_hit = torch.zeros(epoches)
 
-        old_state, reward_action, old_time = self.experience.last_frames()
-
-        for i in tqdm(range(epoches)):
+        for i in tqdm(range(0, epoches)):
             states = []
             values = []
             policies = []
             rewards = []
             reward_actions = []
             action_indices = []
+            counter = 0
 
+            last_rhs = None
+            old_state, _, old_time = self.env.reset()
+            reward_action = torch.zeros((self.num_envs, action_size + 1)).to(
+                self.device
+            )
             for _ in range(self.batch_size):
-                last_rhs = self.experience.last_hidden_state
                 with torch.no_grad():
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action, last_rhs
@@ -165,17 +181,16 @@ class Trainer:
                     new_actions = [self.action_space[act] for act in action]
 
                     new_state, key, new_time, reward, done = self.env.step(new_actions)
+                    if len(torch.nonzero(reward)):
+                        counter += 1
                     if len(torch.nonzero(done)) > 0:
-                        old_state, _, old_time = self.env.reset()
-                        reward_action = torch.zeros(
-                            (self.num_envs, action_size + 1)
-                        ).to(self.device)
+                        print("Here at i = {}".format(i))
                         break
 
                     action_encoding = torch.zeros((action_size, self.num_envs))
                     pi_acts = policy_acts.view(action_size, self.num_envs)
-                    for i in range(self.num_envs):
-                        action_encoding[action[i], i] = 1
+                    for ind in range(self.num_envs):
+                        action_encoding[action[ind], ind] = 1
 
                     calc_reward = self.experience.calculate_reward(
                         reward, new_time, old_time, key
@@ -188,11 +203,13 @@ class Trainer:
                         .to(self.device)
                     )
 
-                    self.experience.last_hidden_state = rhs
+                    last_rhs = rhs
                     old_state = new_state
                     old_time = new_time
                     reward_action = new_reward_action
+                    pi_acts = torch.mul(pi_acts, action_encoding.cuda())
 
+                    pi_acts.transpose_(1, 0)
                     action_encoding.transpose_(1, 0)
 
                     states.append(new_state)
@@ -230,10 +247,19 @@ class Trainer:
             policy_loss[i].copy_(pi_loss)
             entropy_loss[i].copy_(entropy)
             pixel_control_loss[i].copy_(pc_loss)
-            value_replay_loss.copy_(v_loss)
+            value_replay_loss[i].copy_(v_loss)
+            door_hit[i] = counter
+
+            print("Epoche: {} and number of passings: {}".format(i, counter))
+            print(
+                "Epoche: {} and sum rewards in all envs is: {}".format(
+                    i, torch.sum(rewards, dim=0)
+                )
+            )
 
             self.optim.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 10)
             self.optim.step()
 
         return (
@@ -242,6 +268,7 @@ class Trainer:
             entropy_loss,
             pixel_control_loss,
             value_replay_loss,
+            door_hit,
         )
 
     def base_loss(
@@ -288,7 +315,7 @@ class Trainer:
         return agent_loss, pi_loss, v_loss, entropy
 
     def pc_control(self, action_size):
-        exp_batches = self.experience.sample_observations(self.batch_size)
+        exp_batches = self.experience.sample_observations(128)
         states, reward_actions, action_indices, rewards, _, q_auxes, pixel_controls = (
             exp_batches
         )
@@ -313,7 +340,7 @@ class Trainer:
         return pc_loss
 
     def value_replay(self, action_size):
-        exp_batches = self.experience.sample_observations(self.batch_size)
+        exp_batches = self.experience.sample_observations(128)
         states, reward_actions, _, rewards, values, _, _ = exp_batches
 
         batch_v_returns = []

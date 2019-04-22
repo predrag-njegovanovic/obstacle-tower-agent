@@ -37,13 +37,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--entropy_low_rate",
         type=float,
-        default=1e-5,
+        default=5e-4,
         help="Entropy coefficient is sampled from log uniform distribution(low, high).",
     )
     parser.add_argument(
         "--entropy_high_rate",
         type=float,
-        default=1e-5,
+        default=1e-2,
         help="Entropy coefficient is sampled from log uniform distribution(low, high).",
     )
     parser.add_argument(
