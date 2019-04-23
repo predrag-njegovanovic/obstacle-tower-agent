@@ -23,11 +23,13 @@ class ConvNetwork(torch.nn.Module):
 
     def forward(self, inputs):
         new_input = inputs.type(torch.float32)
+        new_input = new_input / 255
+
         conv1_out = self.conv1(new_input)
-        self.relu(conv1_out)
+        # self.relu(conv1_out)
 
         conv2_out = self.conv2(conv1_out)
-        self.relu(conv2_out)
+        # self.relu(conv2_out)
 
         fc_input = conv2_out.view(conv2_out.size(0), -1)
         linear_out = self.fully_connected(fc_input)

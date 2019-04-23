@@ -11,9 +11,9 @@ class TowerAgent(torch.nn.Module):
         second_layer_filters,
         conv_output_size,
         hidden_state_size,
-        entropy_coeff=0.01,
+        entropy_coeff=0.001,
         value_coeff=0.5,
-        pc_lambda=0.99,
+        pc_lambda=0.01,
         ppo_epsilon=0.2,
     ):
 
@@ -29,6 +29,7 @@ class TowerAgent(torch.nn.Module):
 
         self.value = base_networks.ValueNetwork()
         self.policy = base_networks.PolicyNetwork(action_size)
+        self.smooth_l1 = torch.nn.SmoothL1Loss()
         self.entropy_coeff = entropy_coeff
         self.value_coeff = value_coeff
         self.pc_lambda = pc_lambda
@@ -99,7 +100,7 @@ class TowerAgent(torch.nn.Module):
         pc_q_aux_sum = torch.sum(pc_q_aux, dim=1, keepdim=False)
 
         # try with torch.sum instead of torch.mean
-        pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns * pc_q_aux_sum, 2))
+        pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns - pc_q_aux_sum, 2))
         return pc_loss
 
     def v_loss(self, v_returns, new_value):
@@ -108,11 +109,12 @@ class TowerAgent(torch.nn.Module):
 
     def policy_loss(self, policy_logs, adventage, action_indices):
         pi_logs = torch.sum(torch.mul(policy_logs, action_indices), 1)
-        return -torch.mean(adventage * pi_logs)
+        policy_loss = -torch.mean(adventage * pi_logs)
+        return policy_loss
 
     def ppo_policy_loss(self, old_policy, policy, advantage, action_indices):
         pi_logs = torch.sum(torch.mul(policy, action_indices), 1)
-        old_pi_logs = torch.sum(old_policy, 1)
+        old_pi_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
 
         ratio = torch.exp(pi_logs - old_pi_logs)
         ratio_term = ratio * advantage
@@ -126,7 +128,5 @@ class TowerAgent(torch.nn.Module):
         return torch.mean(torch.pow(returns - values, 2))
 
     def entropy(self, policy_logs):
-        policy = torch.exp(policy_logs)
-
-        # try with torch.sum instead of torch.mean
-        return torch.mean(policy_logs * policy)
+        dist = torch.distributions.Categorical
+        return dist(policy_logs).entropy().mean()

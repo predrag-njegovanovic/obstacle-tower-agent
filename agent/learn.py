@@ -25,7 +25,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lr_low_rate",
         type=float,
-        default=1e-4,
+        default=1e-3,
         help="Learning rate is sampled from log uniform distribution(low, high).",
     )
     parser.add_argument(
@@ -64,18 +64,18 @@ if __name__ == "__main__":
         "--timesteps", type=int, default=2500000, help="Number of training steps."
     )
     parser.add_argument(
-        "--batch_size", type=int, default=512, help="Number of steps per epoch"
+        "--batch_size", type=int, default=128, help="Number of steps per epoch"
     )
     parser.add_argument(
         "--sequence-length",
         type=int,
-        default=128,
+        default=64,
         help="Number of samples sampled from experience memory",
     )
     parser.add_argument(
         "--epoches",
         type=int,
-        default=8,
+        default=16,
         help="Number of updates once the experience memory is filled.",
     )
     parser.add_argument(

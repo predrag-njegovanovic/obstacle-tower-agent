@@ -1,6 +1,9 @@
 import torch
 import random
+import itertools
 import numpy as np
+
+from collections import deque
 
 
 class ExperienceMemory:
@@ -40,14 +43,15 @@ class ExperienceMemory:
         self.reward_action = torch.zeros((memory_size, action_size + 1, num_envs)).to(
             device
         )
+        self.first_lstm_rhs = torch.zeros((memory_size, 2, num_envs, 256)).to(device)
+        self.second_lstm_rhs = torch.zeros((memory_size, 2, num_envs, 256)).to(device)
+        self.policy_values = torch.zeros((memory_size, action_size, num_envs)).to(
+            device
+        )
 
     def reward_stats(self):
-        mean = torch.mean(self.reward).item()
-        min_reward = torch.min(self.reward).item()
-        max_reward = torch.max(self.reward).item()
-        std_reward = torch.std(self.reward).item()
-
-        return min_reward, max_reward, std_reward, mean
+        mean = torch.mean(self.reward)
+        return mean
 
     def empty(self):
         self.frame[0].copy_(self.frame[-1])
@@ -67,6 +71,9 @@ class ExperienceMemory:
         done,
         predicted_value,
         q_aux,
+        rhs_first,
+        rhs_second,
+        policy,
     ):
 
         self.frame[self.memory_pointer].copy_(new_state)
@@ -85,6 +92,9 @@ class ExperienceMemory:
             self._calculate_pixel_change(new_state, old_state)
         )
         self.q_aux[self.memory_pointer].copy_(q_aux)
+        self.first_lstm_rhs[self.memory_pointer].copy_(rhs_first)
+        self.second_lstm_rhs[self.memory_pointer].copy_(rhs_second)
+        self.policy_values[self.memory_pointer].copy_(policy)
 
     def increase_frame_pointer(self):
         self.memory_pointer += 1
@@ -104,6 +114,9 @@ class ExperienceMemory:
         batched_pixel_control = []
         batched_action_indices = []
         batched_reward_actions = []
+        batched_first_rhs = []
+        batched_second_rhs = []
+        batched_policy = []
 
         for env in range(self.num_envs):
             start = random.randint(0, self.memory_size - sequence - 2)
@@ -129,6 +142,9 @@ class ExperienceMemory:
             pixel_controls = self.pixel_change[start:sample_index, env, :, :]
             action_indices = self.action_indices[start:sample_index, :, env]
             q_auxes = self.q_aux[start:sample_index, env, :, :]
+            first_rhs = self.first_lstm_rhs[start:sample_index, :, env, :]
+            second_rhs = self.second_lstm_rhs[start:sample_index, :, env, :]
+            policies = self.policy_values[start:sample_index, :, env]
 
             batched_value.append(values)
             batched_q_aux.append(q_auxes)
@@ -137,19 +153,27 @@ class ExperienceMemory:
             batched_pixel_control.append(pixel_controls)
             batched_reward_actions.append(reward_actions)
             batched_action_indices.append(action_indices)
+            batched_first_rhs.append(first_rhs)
+            batched_second_rhs.append(second_rhs)
+            batched_policy.append(policies)
 
         return (
             torch.cat(batched_states, dim=0),
             torch.cat(batched_reward_actions, dim=0),
             torch.cat(batched_action_indices, dim=0),
+            torch.cat(batched_policy, dim=0),
             batched_reward,
             batched_value,
             batched_q_aux,
             batched_pixel_control,
+            (
+                torch.cat(batched_first_rhs, dim=0).view(2, -1, 256),
+                torch.cat(batched_second_rhs, dim=0).view(2, -1, 256),
+            ),
         )
 
     # try gae later
-    def compute_returns(self, rewards, values, discount=0.99):
+    def compute_returns(self, rewards, values, discount=0.95):
         num_steps = rewards.shape[0]
 
         returns = np.zeros((num_steps))
@@ -225,8 +249,8 @@ class ExperienceMemory:
         Calculate pixel change between two states by creating
         frame differences and then subsampling it to twenty 4x4 pieces.
         """
-        new_state = new_state.type(torch.float32)
-        old_state = old_state.type(torch.float32)
+        new_state = new_state.type(torch.float32) / 255
+        old_state = old_state.type(torch.float32) / 255
 
         frame_diff = torch.abs(
             new_state[:, :, 2:-2, 2:-2] - old_state[:, :, 2:-2, 2:-2]
