@@ -90,6 +90,7 @@ class Trainer:
         return lr_scheduler.get_lr()
 
     def _fill_experience(self, timestep, action_size):
+        counter = 0
         for step in tqdm(range(self.experience_history_size)):
             with torch.no_grad():
                 if not timestep:
@@ -120,6 +121,8 @@ class Trainer:
 
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
+                if len(torch.nonzero(reward)) > 0:
+                    counter += 1
 
                 action_encoding = torch.zeros((action_size, self.num_envs))
                 for i in range(self.num_envs):
@@ -142,6 +145,7 @@ class Trainer:
                 )
                 self.experience.increase_frame_pointer()
                 timestep += 1
+        print("Hits in episode run: {}".format(counter))
 
     def _update_observations(self, action_size):
         value_loss = torch.zeros(self.num_of_epoches)
@@ -154,7 +158,7 @@ class Trainer:
         self.optim.zero_grad()
         for i in tqdm(range(self.num_of_epoches)):
             exp_batches = self.experience.sample_observations(self.sequence_length)
-            states, reward_actions, action_indices, policy, rewards, values, _, _, rhs = (
+            states, reward_actions, action_indices, policy, rewards, values, _, _, rhs, dones = (
                 exp_batches
             )
 
@@ -167,6 +171,7 @@ class Trainer:
                 values,
                 policy,
                 rhs,
+                dones,
             )
 
             pc_loss = self.pc_control(action_size)
@@ -184,7 +189,7 @@ class Trainer:
             loss = loss / (i + 1)
             loss.backward()
             if i == self.num_of_epoches - 1:
-                # torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 0.5)
                 self.optim.step()
 
         return (
@@ -206,12 +211,15 @@ class Trainer:
         values,
         old_policy,
         base_rhs,
+        dones,
     ):
         batch_returns = []
         batch_advantages = []
 
         for env in range(self.num_envs):
-            returns = self.experience.compute_returns(rewards[env], values[env])
+            returns = self.experience.compute_returns(
+                rewards[env], values[env], dones[env]
+            )
             returns = torch.Tensor(returns).to(self.device)
 
             adv = returns - values[env]
@@ -220,9 +228,10 @@ class Trainer:
             batch_returns.append(returns)
 
         advantage = torch.cat(batch_advantages, dim=0)
-        advantage = (advantage - torch.mean(advantage, dim=0)) / torch.std(
-            advantage + 1e-6
-        )
+        if self.ppo:
+            advantage = (advantage - torch.mean(advantage, dim=0)) / torch.std(
+                advantage + 1e-6
+            )
 
         new_value, policy_acts, _ = self.agent_network.act(
             states, reward_actions, base_rhs
@@ -242,7 +251,7 @@ class Trainer:
 
     def pc_control(self, action_size):
         exp_batches = self.experience.sample_observations(self.sequence_length)
-        states, reward_actions, action_indices, _, rewards, _, q_auxes, pixel_controls, rhs = (
+        states, reward_actions, action_indices, _, rewards, _, q_auxes, pixel_controls, rhs, dones = (
             exp_batches
         )
 
@@ -250,7 +259,7 @@ class Trainer:
 
         for env in range(self.num_envs):
             pc_returns = self.experience.compute_pc_returns(
-                q_auxes[env], rewards[env], pixel_controls[env]
+                q_auxes[env], rewards[env], pixel_controls[env], dones[env]
             )
             batch_pc_returns.append(pc_returns)
 
@@ -266,12 +275,14 @@ class Trainer:
 
     def value_replay(self, action_size):
         exp_batches = self.experience.sample_observations(self.sequence_length)
-        states, reward_actions, _, _, rewards, values, _, _, rhs = exp_batches
+        states, reward_actions, _, _, rewards, values, _, _, rhs, dones = exp_batches
 
         batch_v_returns = []
 
         for env in range(self.num_envs):
-            v_returns = self.experience.compute_v_returns(rewards[env], values[env])
+            v_returns = self.experience.compute_v_returns(
+                rewards[env], values[env], dones[env]
+            )
             v_returns = torch.Tensor(v_returns).to(self.device)
             batch_v_returns.append(v_returns)
 

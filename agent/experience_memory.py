@@ -117,6 +117,7 @@ class ExperienceMemory:
         batched_first_rhs = []
         batched_second_rhs = []
         batched_policy = []
+        batched_dones = []
 
         for env in range(self.num_envs):
             start = random.randint(0, self.memory_size - sequence - 2)
@@ -145,6 +146,7 @@ class ExperienceMemory:
             first_rhs = self.first_lstm_rhs[start:sample_index, :, env, :]
             second_rhs = self.second_lstm_rhs[start:sample_index, :, env, :]
             policies = self.policy_values[start:sample_index, :, env]
+            dones = self.done_state[start:sample_index, env]
 
             batched_value.append(values)
             batched_q_aux.append(q_auxes)
@@ -156,6 +158,7 @@ class ExperienceMemory:
             batched_first_rhs.append(first_rhs)
             batched_second_rhs.append(second_rhs)
             batched_policy.append(policies)
+            batched_dones.append(dones)
 
         return (
             torch.cat(batched_states, dim=0),
@@ -170,16 +173,15 @@ class ExperienceMemory:
                 torch.cat(batched_first_rhs, dim=0).view(2, -1, 256),
                 torch.cat(batched_second_rhs, dim=0).view(2, -1, 256),
             ),
+            batched_dones,
         )
 
     # try gae later
-    def compute_returns(self, rewards, values, discount=0.95):
+    def compute_returns(self, rewards, values, dones, discount=0.99):
         num_steps = rewards.shape[0]
 
         returns = np.zeros((num_steps))
-        if rewards[-1]:
-            returns[-1] = rewards[-1]
-        else:
+        if not dones[-1]:
             returns[-1] = values[-1]
 
         for step in reversed(range(num_steps - 1)):
@@ -187,11 +189,11 @@ class ExperienceMemory:
 
         return returns
 
-    def compute_pc_returns(self, q_aux, rewards, pixel_controls, gamma=0.9):
+    def compute_pc_returns(self, q_aux, rewards, pixel_controls, dones, gamma=0.9):
         num_steps, height, width = pixel_controls.shape
 
         pc_returns = torch.zeros((num_steps, height, width))
-        if rewards[-1]:
+        if not dones[-1]:
             pc_returns[-1] = q_aux[-1]
 
         for step in reversed(range(num_steps - 1)):
@@ -201,11 +203,11 @@ class ExperienceMemory:
 
         return pc_returns
 
-    def compute_v_returns(self, rewards, values, gamma=1.0):
+    def compute_v_returns(self, rewards, values, dones, gamma=1.0):
         num_steps = values.shape[0]
 
         v_returns = np.zeros((num_steps))
-        if rewards[-1]:
+        if not dones[-1]:
             v_returns[-1] = values[-1]
 
         for step in reversed(range(num_steps - 1)):
