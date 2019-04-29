@@ -129,4 +129,4 @@ class TowerAgent(torch.nn.Module):
 
     def entropy(self, policy_logs):
         dist = torch.distributions.Categorical
-        return dist(policy_logs).entropy().mean()
+        return dist(logits=policy_logs).entropy().mean()

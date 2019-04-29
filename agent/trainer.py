@@ -50,10 +50,10 @@ class Trainer:
         Input: torch.Tensor([8, 54])
         Return: torch.Tensor([8])
         """
-        return self.distribution(actions).sample()
+        return self.distribution(logits=actions).sample()
 
     def train(self):
-        num_of_updates = self.total_timesteps // self.experience_history_size
+        num_of_updates = self.total_timesteps // self.batch_size
         action_size = len(self.action_space)
 
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -90,8 +90,18 @@ class Trainer:
         return lr_scheduler.get_lr()
 
     def _fill_experience(self, timestep, action_size):
+        states = []
+        reward_actions = []
+        action_indices = []
+        policy = []
+        rewards = []
+        values = []
+        rhx = []
+        chx = []
+        dones = []
+
         counter = 0
-        for step in tqdm(range(self.experience_history_size)):
+        for _ in tqdm(range(self.batch_size)):
             with torch.no_grad():
                 if not timestep:
                     old_state, key, old_time = self.env.reset()
@@ -102,16 +112,10 @@ class Trainer:
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action, last_rhs
                     )
-                    _, q_aux_max = self.agent_network.pixel_control_act(
-                        old_state, reward_action, last_rhs
-                    )
                 else:
                     last_rhs = self.experience.last_hidden_state
                     old_state, reward_action, old_time = self.experience.last_frames()
                     value, policy_acts, rhs = self.agent_network.act(
-                        old_state, reward_action, last_rhs
-                    )
-                    _, q_aux_max = self.agent_network.pixel_control_act(
                         old_state, reward_action, last_rhs
                     )
 
@@ -121,12 +125,29 @@ class Trainer:
 
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
+
+                if len(torch.nonzero(done)) > 0:
+                    self.env.reset()
+                    break
+
                 if len(torch.nonzero(reward)) > 0:
                     counter += 1
 
                 action_encoding = torch.zeros((action_size, self.num_envs))
                 for i in range(self.num_envs):
                     action_encoding[action[i], i] = 1
+
+                states.append(new_state)
+                reward_actions.append(
+                    self.experience.concatenate_reward_and_action(reward, action_encoding))
+                action_indices.append(action_encoding)
+                policy.append(policies)
+                rewards.append(self.experience.calculate_reward(
+                    reward, new_time, old_time, key))
+                values.append(value)
+                rhx.append(rhs[0])
+                chx.append(rhs[1])
+                dones.append(done)
 
                 self.experience.add_experience(
                     new_state,
@@ -138,68 +159,44 @@ class Trainer:
                     action_encoding,
                     done,
                     value,
-                    q_aux_max,
                     rhs[0],
                     rhs[1],
                     policies,
                 )
-                self.experience.increase_frame_pointer()
                 timestep += 1
-        print("Hits in episode run: {}".format(counter))
 
-    def _update_observations(self, action_size):
-        value_loss = torch.zeros(self.num_of_epoches)
-        policy_loss = torch.zeros(self.num_of_epoches)
-        entropy_loss = torch.zeros(self.num_of_epoches)
-        value_replay_loss = torch.zeros(self.num_of_epoches)
-        pixel_control_loss = torch.zeros(self.num_of_epoches)
-        door_hit = torch.zeros(self.num_of_epoches)
+        import pdb
+        pdb.set_trace()
+        state_tensor = torch.cat(states, dim=0)
+        reward_actions = torch.cat(reward_actions, dim=0)
+        action_indices = torch.cat(action_indices, dim=0)
+        policy_tensor = torch.cat(policy, dim=0)
+        rhs = (torch.cat(rhx, dim=1), torch.cat(chx, dim=1))
 
-        self.optim.zero_grad()
-        for i in tqdm(range(self.num_of_epoches)):
-            exp_batches = self.experience.sample_observations(self.sequence_length)
-            states, reward_actions, action_indices, policy, rewards, values, _, _, rhs, dones = (
-                exp_batches
-            )
+        values = torch.stack(values)
+        rewards = torch.stack(rewards)
+        dones = torch.stack(dones)
 
-            agent_loss, pi_loss, base_v_loss, entropy = self.base_loss(
-                action_size,
-                states,
-                reward_actions,
-                action_indices,
-                rewards,
-                values,
-                policy,
-                rhs,
-                dones,
-            )
-
+        if self.experience.full():
             pc_loss = self.pc_control(action_size)
             v_loss = self.value_replay(action_size)
+        else:
+            agent_loss, pi_loss, value_loss, ent = self.base_loss(action_size,
+                                                                  state_tensor,
+                                                                  reward_actions,
+                                                                  action_indices,
+                                                                  rewards,
+                                                                  values,
+                                                                  policy_tensor,
+                                                                  rhs,
+                                                                  dones)
+            loss = agent_loss
 
-            loss = agent_loss + v_loss + pc_loss
-
-            value_loss[i].copy_(base_v_loss)
-            policy_loss[i].copy_(pi_loss)
-            entropy_loss[i].copy_(entropy)
-            pixel_control_loss[i].copy_(pc_loss)
-            value_replay_loss[i].copy_(v_loss)
-            # door_hit[i] = counter
-
-            loss = loss / (i + 1)
+            self.optim.zero_grad()
             loss.backward()
-            if i == self.num_of_epoches - 1:
-                torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 0.5)
-                self.optim.step()
+            self.optim.step()
 
-        return (
-            policy_loss,
-            value_loss,
-            entropy_loss,
-            pixel_control_loss,
-            value_replay_loss,
-            door_hit,
-        )
+        print("Hits in episode run: {}".format(counter))
 
     def base_loss(
         self,
@@ -218,11 +215,11 @@ class Trainer:
 
         for env in range(self.num_envs):
             returns = self.experience.compute_returns(
-                rewards[env], values[env], dones[env]
+                rewards[:, env], values[:, env], dones[:, env]
             )
             returns = torch.Tensor(returns).to(self.device)
 
-            adv = returns - values[env]
+            adv = returns - values[:, env]
 
             batch_advantages.append(adv)
             batch_returns.append(returns)
@@ -233,6 +230,8 @@ class Trainer:
                 advantage + 1e-6
             )
 
+        import pdb
+        pdb.set_trace()
         new_value, policy_acts, _ = self.agent_network.act(
             states, reward_actions, base_rhs
         )
