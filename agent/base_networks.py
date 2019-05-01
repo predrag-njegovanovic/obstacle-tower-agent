@@ -26,10 +26,10 @@ class ConvNetwork(torch.nn.Module):
         new_input = new_input / 255
 
         conv1_out = self.conv1(new_input)
-        # self.relu(conv1_out)
+        self.relu(conv1_out)
 
         conv2_out = self.conv2(conv1_out)
-        # self.relu(conv2_out)
+        self.relu(conv2_out)
 
         fc_input = conv2_out.view(conv2_out.size(0), -1)
         linear_out = self.fully_connected(fc_input)
@@ -45,7 +45,7 @@ class LSTMNetwork(torch.nn.Module):
         self.lstm = torch.nn.LSTM(
             input_size=input_size + action_size + 1,
             hidden_size=hidden_state_size,
-            num_layers=2,
+            num_layers=1,
             batch_first=True,
         )
 
@@ -55,7 +55,7 @@ class LSTMNetwork(torch.nn.Module):
         batch_seq = features.unsqueeze(1)
         # 8 x 1 x 311 (batch, seq, in)
         output, hidden_state = self.lstm(batch_seq, last_hidden_state)
-        return output, hidden_state
+        return output.squeeze(1), hidden_state
 
 
 class ValueNetwork(torch.nn.Module):
@@ -68,9 +68,8 @@ class ValueNetwork(torch.nn.Module):
         """
         Return estimated value V(s).
         """
-        batched_inputs = inputs.view(inputs.size(0), -1)
         # create Tensor([8]) out of Tensor(8 x 1)
-        value = torch.squeeze(self.value(batched_inputs))
+        value = torch.squeeze(self.value(inputs))
         return value
 
 
@@ -88,8 +87,7 @@ class PolicyNetwork(torch.nn.Module):
         """
         Return Log(pi).
         """
-        fc_inputs = inputs.view(inputs.size(0), -1)
-        fc_out = self.fully_connected(fc_inputs)
+        fc_out = self.fully_connected(inputs)
         log_policy = self.log_policy(fc_out)
         return log_policy
 

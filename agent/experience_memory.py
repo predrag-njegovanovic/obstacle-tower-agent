@@ -1,6 +1,5 @@
 import torch
 import random
-import itertools
 import numpy as np
 
 from collections import deque
@@ -42,12 +41,6 @@ class ExperienceMemory:
         mean = torch.mean(self.reward)
         return mean
 
-    def empty(self):
-        self.frame[0].copy_(self.frame[-1])
-        self.time[0].copy_(self.time[-1])
-        self.reward_action[0].copy_(self.reward_action[-1])
-        self.memory_pointer = 0
-
     def add_experience(
         self,
         new_state,
@@ -78,6 +71,9 @@ class ExperienceMemory:
             self.first_lstm_rhs.popleft()
             self.second_lstm_rhs.popleft()
 
+        new_state = new_state.type(torch.uint8)
+        old_state = old_state.type(torch.uint8)
+
         self.frame.append(new_state)
         self.time.append(new_time)
         self.key.append(key)
@@ -87,7 +83,8 @@ class ExperienceMemory:
         self.reward_action.append(
             self.concatenate_reward_and_action(reward, action_encoding))
         self.done_state.append(done)
-        self.pixel_change.append(self._calculate_pixel_change(new_state, old_state))
+        self.pixel_change.append(self._calculate_pixel_change(
+            new_state, old_state))
         self.first_lstm_rhs.append(rhs_first)
         self.second_lstm_rhs.append(rhs_second)
         self.policy_values.append(policy)
@@ -117,40 +114,42 @@ class ExperienceMemory:
         batched_policy = []
         batched_dones = []
 
+        dones = list(self.done_state)
         for env in range(self.num_envs):
             start = random.randint(0, self.memory_size - sequence - 2)
             sample_index = start + sequence
 
-            if self.done_state[start][:, env] or self.done_state[start + 1][:, env]:
+            if dones[start][env] or dones[start + 1][env]:
                 start += 1
-                if self.done_state[start][:, env]:
+                if dones[start][env]:
                     start += 1
 
             for i in range(sequence):
-                if self.done_state[start + i, env]:
+                if dones[start + i][env]:
                     sample_index = start + i - 1
                     break
 
             if sample_index <= start:
                 continue
 
-            # Fix sampling
-            states = [frame[env, :, :, :] for frame in self.frame[start:sample_index]]
+            states = [frame[env, :, :, :]
+                      for frame in list(self.frame)[start:sample_index]]
             reward_actions = [reward_action[:, env]
-                              for reward_action in self.reward_action[start:sample_index]]
-            rewards = [reward[env] for reward in self.reward[start:sample_index]]
-            values = [value[env] for value in self.value[start:sample_index]]
+                              for reward_action in list(self.reward_action)[start:sample_index]]
+            rewards = [reward[env] for reward in list(self.reward)[start:sample_index]]
+            values = [value[env] for value in list(self.value)[start:sample_index]]
             pixel_controls = [pixel_change[env, :, :]
-                              for pixel_change in self.pixel_change[start:sample_index]]
+                              for pixel_change in list(self.pixel_change)[start:sample_index]]
             action_indices = [action_indices[:, env]
-                              for action_indices in self.action_indices[start:sample_index]]
+                              for action_indices in list(self.action_indices)[start:sample_index]]
             first_rhs = [rhs[:, env, :]
-                         for rhs in self.first_lstm_rhs[start:sample_index]]
+                         for rhs in list(self.first_lstm_rhs)[start:sample_index]]
             second_rhs = [rhs[:, env, :]
-                          for rhs in self.second_lstm_rhs[start:sample_index]]
+                          for rhs in list(self.second_lstm_rhs)[start:sample_index]]
             policies = [policies[:, env]
-                        for policies in self.policy_values[start:sample_index]]
-            dones = [dones[env] for dones in self.done_state[start:sample_index]]
+                        for policies in list(self.policy_values)[start:sample_index]]
+            done_states = [dones[env]
+                           for dones in list(self.done_state)[start:sample_index]]
 
             batched_value.append(values)
             batched_states.append(states)
@@ -161,21 +160,23 @@ class ExperienceMemory:
             batched_first_rhs.append(first_rhs)
             batched_second_rhs.append(second_rhs)
             batched_policy.append(policies)
-            batched_dones.append(dones)
+            batched_dones.append(done_states)
 
         return (
-            torch.cat(batched_states, dim=0),
-            torch.cat(batched_reward_actions, dim=0),
-            torch.cat(batched_action_indices, dim=0),
-            torch.cat(batched_policy, dim=0),
-            batched_reward,
-            batched_value,
-            batched_pixel_control,
+            torch.cat([torch.stack(elem) for elem in batched_states], dim=0),
+            torch.cat([torch.stack(elem) for elem in batched_reward_actions], dim=0),
+            torch.cat([torch.stack(elem) for elem in batched_action_indices], dim=0),
+            torch.cat([torch.stack(elem) for elem in batched_policy], dim=0),
+            [torch.stack(elem) for elem in batched_reward],
+            [torch.stack(elem) for elem in batched_value],
+            [torch.stack(elem) for elem in batched_pixel_control],
             (
-                torch.cat(batched_first_rhs, dim=0).view(2, -1, 256),
-                torch.cat(batched_second_rhs, dim=0).view(2, -1, 256),
+                torch.cat([torch.stack(elem)
+                           for elem in batched_first_rhs], dim=0).view(1, -1, 256),
+                torch.cat([torch.stack(elem)
+                           for elem in batched_second_rhs], dim=0).view(1, -1, 256),
             ),
-            batched_dones,
+            [torch.stack(elem) for elem in batched_dones],
         )
 
     # try gae later
@@ -194,13 +195,13 @@ class ExperienceMemory:
     def compute_pc_returns(self, q_aux, rewards, pixel_controls, dones, gamma=0.9):
         num_steps, height, width = pixel_controls.shape
 
-        pc_returns = torch.zeros((num_steps, height, width))
+        pc_returns = torch.zeros((num_steps, height, width)).to(self.device)
         if not dones[-1]:
-            pc_returns[-1] = q_aux[-1]
+            pc_returns[-1] = q_aux
 
         for step in reversed(range(num_steps - 1)):
             pc_returns[step] = (
-                pixel_controls[step].type(torch.float32) + gamma * pc_returns[step + 1]
+                pixel_controls[step] + gamma * pc_returns[step + 1]
             )
 
         return pc_returns
@@ -227,10 +228,10 @@ class ExperienceMemory:
                 reward[index] *= 10
 
             time_difference = new_time[index] - old_time[index]
-            if time_difference <= 0:
-                diff[index] = 0
-            else:
-                diff[index] = time_difference / 1000
+            # if time_difference <= 0:
+            #     diff[index] = 0
+            # else:
+            diff[index] = time_difference / 1000
 
         return reward + diff + 0.2 * key
 
@@ -246,7 +247,7 @@ class ExperienceMemory:
         reshaped_frame = frame_mean_diff.reshape(subsamples_shape)
         reshaped_mean = torch.mean(reshaped_frame, -1)
         pc_output = torch.mean(reshaped_mean, 2)
-        return pc_output.type(torch.uint8)
+        return pc_output
 
     def _calculate_pixel_change(self, new_state, old_state):
         """
@@ -268,5 +269,5 @@ class ExperienceMemory:
         Concatenate one-hot action representation from last state
         and current state reward.
         """
-        clipped_reward = torch.clamp(reward, 0, 1)
-        return torch.cat((action_encoding, clipped_reward.unsqueeze(0)), dim=0).to(self.device)
+        # clipped_reward = torch.clamp(reward, 0, 1)
+        return torch.cat((action_encoding, reward.unsqueeze(0)), dim=0).to(self.device)

@@ -64,12 +64,12 @@ if __name__ == "__main__":
         "--timesteps", type=int, default=2500000, help="Number of training steps."
     )
     parser.add_argument(
-        "--batch_size", type=int, default=128, help="Number of steps per epoch"
+        "--batch_size", type=int, default=20, help="Number of steps per epoch"
     )
     parser.add_argument(
         "--sequence-length",
         type=int,
-        default=64,
+        default=20,
         help="Number of samples sampled from experience memory",
     )
     parser.add_argument(

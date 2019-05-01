@@ -94,21 +94,22 @@ class TowerAgent(torch.nn.Module):
         return loss, policy_loss, value_loss, entropy
 
     def pc_loss(self, action_size, action_indices, q_aux, pc_returns):
-        reshaped_indices = action_indices.view(-1, action_size, 1, 1)
+        reshaped_indices = action_indices.view(-1, action_size, 1, 1).cuda()
         pc_q_aux = torch.mul(q_aux, reshaped_indices)
 
         pc_q_aux_sum = torch.sum(pc_q_aux, dim=1, keepdim=False)
 
         # try with torch.sum instead of torch.mean
-        pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns - pc_q_aux_sum, 2))
+        pc_loss = self.pc_lambda * torch.mean(0.5 *
+                                              torch.pow(pc_returns - pc_q_aux_sum, 2))
         return pc_loss
 
     def v_loss(self, v_returns, new_value):
-        v_loss = torch.mean(torch.pow(v_returns - new_value, 2))
+        v_loss = torch.mean(0.5 * torch.pow(v_returns - new_value, 2))
         return v_loss
 
     def policy_loss(self, policy_logs, adventage, action_indices):
-        pi_logs = torch.sum(torch.mul(policy_logs, action_indices), 1)
+        pi_logs = torch.sum(torch.mul(policy_logs, action_indices.cuda()), 1)
         policy_loss = -torch.mean(adventage * pi_logs)
         return policy_loss
 
@@ -125,7 +126,7 @@ class TowerAgent(torch.nn.Module):
         return policy_loss
 
     def value_loss(self, returns, values):
-        return torch.mean(torch.pow(returns - values, 2))
+        return torch.mean(0.5 * torch.pow(returns - values, 2))
 
     def entropy(self, policy_logs):
         dist = torch.distributions.Categorical

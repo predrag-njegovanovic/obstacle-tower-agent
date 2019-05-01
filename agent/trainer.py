@@ -1,5 +1,6 @@
 import os
 import torch
+import numpy as np
 
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
@@ -39,7 +40,7 @@ class Trainer:
         self.lr = learning_rate
         self.writer = SummaryWriter()
         self.optim = torch.optim.Adam(
-            self.agent_network.parameters(), lr=self.lr, eps=1e-5
+            self.agent_network.parameters(), lr=self.lr, eps=1e-8
         )
         self.device = device
         self.ppo = ppo
@@ -61,22 +62,19 @@ class Trainer:
         )
 
         for timestep in range(num_of_updates):
-            self._fill_experience(timestep, action_size)
-            pi_loss, v_loss, entropy, pc_loss, vr_loss, door_hit = self._update_observations(
-                action_size
-            )
-            mean_reward = self.experience.reward_stats()
-
-            self.writer.add_scalar("tower/rewards", mean_reward, timestep)
-            self.writer.add_scalar("tower/policy_loss", torch.mean(pi_loss), timestep)
-            self.writer.add_scalar("tower/value_loss", torch.mean(v_loss), timestep)
-            self.writer.add_scalar("tower/entropy_loss", torch.mean(entropy), timestep)
-            self.writer.add_scalar("tower/pc_loss", torch.mean(pc_loss), timestep)
-            self.writer.add_scalar("tower/vr_loss", torch.mean(vr_loss), timestep)
-            # self.writer.add_scalar("tower/door_hit", torch.mean(door_hit), timestep)
+            pi_loss, val_loss, ent, pc_loss, v_loss, reward = self._fill_experience(
+                action_size)
+            self.writer.add_scalar("tower/rewards", reward, timestep)
+            self.writer.add_scalar("tower/policy_loss", pi_loss, timestep)
+            self.writer.add_scalar("tower/value_loss", val_loss, timestep)
+            self.writer.add_scalar("tower/entropy_loss", ent, timestep)
+            if pc_loss:
+                self.writer.add_scalar("tower/pc_loss", pc_loss, timestep)
+            if v_loss:
+                self.writer.add_scalar("tower/vr_loss", v_loss, timestep)
+            self.writer.add_scalar("tower/lr", np.array(lr_scheduler.get_lr()), timestep)
 
             lr_scheduler.step()
-            self.experience.empty()
             if timestep % 100 == 0:
                 name = "ppo" if self.ppo else "a2c"
                 path = os.path.join(
@@ -86,10 +84,9 @@ class Trainer:
 
         self.writer.close()
 
-    def _lr(self, lr_scheduler):
-        return lr_scheduler.get_lr()
+    def _fill_experience(self, action_size):
+        reset = True
 
-    def _fill_experience(self, timestep, action_size):
         states = []
         reward_actions = []
         action_indices = []
@@ -101,17 +98,19 @@ class Trainer:
         dones = []
 
         counter = 0
+        reward_acc = 0
         for _ in tqdm(range(self.batch_size)):
             with torch.no_grad():
-                if not timestep:
+                if reset:
                     old_state, key, old_time = self.env.reset()
-                    last_rhs = self.experience.last_hidden_state
+                    last_rhs = None
                     reward_action = torch.zeros((self.num_envs, action_size + 1)).to(
                         self.device
                     )
                     value, policy_acts, rhs = self.agent_network.act(
                         old_state, reward_action, last_rhs
                     )
+                    reset = False
                 else:
                     last_rhs = self.experience.last_hidden_state
                     old_state, reward_action, old_time = self.experience.last_frames()
@@ -126,20 +125,27 @@ class Trainer:
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
 
-                if len(torch.nonzero(done)) > 0:
-                    self.env.reset()
-                    break
-
-                if len(torch.nonzero(reward)) > 0:
-                    counter += 1
-
+                reward_acc += reward.mean()
                 action_encoding = torch.zeros((action_size, self.num_envs))
                 for i in range(self.num_envs):
                     action_encoding[action[i], i] = 1
 
+                new_reward_action = self.experience.concatenate_reward_and_action(
+                    reward, action_encoding)
+
+                if len(torch.nonzero(done)) > 0:
+                    self.env.reset()
+                    reset = True
+                    if not len(states):
+                        continue
+                    else:
+                        break
+
+                if len(torch.nonzero(reward)) > 0:
+                    counter += 1
+
                 states.append(new_state)
-                reward_actions.append(
-                    self.experience.concatenate_reward_and_action(reward, action_encoding))
+                reward_actions.append(new_reward_action)
                 action_indices.append(action_encoding)
                 policy.append(policies)
                 rewards.append(self.experience.calculate_reward(
@@ -163,23 +169,35 @@ class Trainer:
                     rhs[1],
                     policies,
                 )
-                timestep += 1
 
-        import pdb
-        pdb.set_trace()
         state_tensor = torch.cat(states, dim=0)
-        reward_actions = torch.cat(reward_actions, dim=0)
-        action_indices = torch.cat(action_indices, dim=0)
+        reward_actions = torch.cat(reward_actions, dim=1).transpose_(1, 0)
+        action_indices = torch.cat(action_indices, dim=1).transpose_(1, 0)
         policy_tensor = torch.cat(policy, dim=0)
-        rhs = (torch.cat(rhx, dim=1), torch.cat(chx, dim=1))
+        hidden_state = (torch.cat(rhx, dim=1), torch.cat(chx, dim=1))
 
         values = torch.stack(values)
         rewards = torch.stack(rewards)
         dones = torch.stack(dones)
 
+        pc_loss = None
+        v_loss = None
         if self.experience.full():
-            pc_loss = self.pc_control(action_size)
+            with torch.no_grad():
+                _, q_aux = self.agent_network.pixel_control_act(
+                    new_state, new_reward_action.transpose_(1, 0), rhs)
+            pc_loss = self.pc_control(action_size, q_aux)
             v_loss = self.value_replay(action_size)
+            agent_loss, pi_loss, value_loss, ent = self.base_loss(action_size,
+                                                                  state_tensor,
+                                                                  reward_actions,
+                                                                  action_indices,
+                                                                  rewards,
+                                                                  values,
+                                                                  policy_tensor,
+                                                                  hidden_state,
+                                                                  dones)
+            loss = agent_loss + v_loss + pc_loss
         else:
             agent_loss, pi_loss, value_loss, ent = self.base_loss(action_size,
                                                                   state_tensor,
@@ -188,15 +206,16 @@ class Trainer:
                                                                   rewards,
                                                                   values,
                                                                   policy_tensor,
-                                                                  rhs,
+                                                                  hidden_state,
                                                                   dones)
             loss = agent_loss
 
-            self.optim.zero_grad()
-            loss.backward()
-            self.optim.step()
+        self.optim.zero_grad()
+        loss.backward()
+        self.optim.step()
 
         print("Hits in episode run: {}".format(counter))
+        return pi_loss, value_loss, ent, pc_loss, v_loss, reward_acc
 
     def base_loss(
         self,
@@ -230,8 +249,6 @@ class Trainer:
                 advantage + 1e-6
             )
 
-        import pdb
-        pdb.set_trace()
         new_value, policy_acts, _ = self.agent_network.act(
             states, reward_actions, base_rhs
         )
@@ -248,9 +265,9 @@ class Trainer:
 
         return agent_loss, pi_loss, v_loss, entropy
 
-    def pc_control(self, action_size):
+    def pc_control(self, action_size, q_aux):
         exp_batches = self.experience.sample_observations(self.sequence_length)
-        states, reward_actions, action_indices, _, rewards, _, q_auxes, pixel_controls, rhs, dones = (
+        states, reward_actions, action_indices, _, rewards, _, pixel_controls, rhs, dones = (
             exp_batches
         )
 
@@ -258,7 +275,7 @@ class Trainer:
 
         for env in range(self.num_envs):
             pc_returns = self.experience.compute_pc_returns(
-                q_auxes[env], rewards[env], pixel_controls[env], dones[env]
+                q_aux[env, :, :], rewards[env], pixel_controls[env], dones[env]
             )
             batch_pc_returns.append(pc_returns)
 
@@ -274,7 +291,7 @@ class Trainer:
 
     def value_replay(self, action_size):
         exp_batches = self.experience.sample_observations(self.sequence_length)
-        states, reward_actions, _, _, rewards, values, _, _, rhs, dones = exp_batches
+        states, reward_actions, _, _, rewards, values, _, rhs, dones = exp_batches
 
         batch_v_returns = []
 

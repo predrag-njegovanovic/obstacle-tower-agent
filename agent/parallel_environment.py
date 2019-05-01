@@ -20,16 +20,13 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
             cumulative_reward = 0
 
             # frame skipping
-            for _ in range(2):
+            for _ in range(4):
                 observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time = observation
+                cumulative_reward += reward
 
                 if done:
-                    state = obstacle_tower.reset()
-                    state, keys, time = observation
                     break
-
-                cumulative_reward += reward
 
             connection.send(
                 (prepare_state(state).tolist(), keys, time, cumulative_reward, done)

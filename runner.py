@@ -11,10 +11,10 @@ from agent.parallel_environment import prepare_state
 
 
 def greedy_policy(action_space, policy):
-    print(torch.exp(policy))
     probs = torch.distributions.Categorical
-    # index = probs(policy).sample()
-    index = torch.argmax(policy)
+    # index = probs(logits=policy).sample()
+    pi = torch.exp(policy)
+    index = torch.argmax(pi)
     return action_space[index], index
 
 
