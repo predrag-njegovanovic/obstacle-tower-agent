@@ -43,7 +43,7 @@ class LSTMNetwork(torch.nn.Module):
         super(LSTMNetwork, self).__init__()
 
         self.lstm = torch.nn.LSTM(
-            input_size=input_size + action_size + 1,
+            input_size=input_size,
             hidden_size=hidden_state_size,
             num_layers=1,
             batch_first=True,
@@ -52,7 +52,7 @@ class LSTMNetwork(torch.nn.Module):
     def forward(self, inputs, reward_and_last_action, last_hidden_state):
         features = torch.cat((inputs, reward_and_last_action), dim=1)
         # 8 x 311
-        batch_seq = features.unsqueeze(1)
+        batch_seq = inputs.unsqueeze(1)
         # 8 x 1 x 311 (batch, seq, in)
         output, hidden_state = self.lstm(batch_seq, last_hidden_state)
         return output.squeeze(1), hidden_state
@@ -81,15 +81,90 @@ class PolicyNetwork(torch.nn.Module):
             in_features=256, out_features=action_size
         )
 
-        self.log_policy = torch.nn.LogSoftmax(dim=1)
+        self.policy = torch.nn.Softmax(dim=1)
 
     def forward(self, inputs):
         """
-        Return Log(pi).
+        Return action probabilities.
         """
         fc_out = self.fully_connected(inputs)
-        log_policy = self.log_policy(fc_out)
-        return log_policy
+        policy = self.policy(fc_out)
+        return policy
+
+
+class FeatureExtractor(torch.nn.Module):
+    def __init__(self, num_of_filters, output_size):
+        super(FeatureExtractor, self).__init__()
+
+        self.conv_f = torch.nn.Conv2d(
+            3, num_of_filters, kernel_size=3, stride=2, padding=1)
+        self.conv_s = torch.nn.Conv2d(
+            num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1)
+        self.conv_t = torch.nn.Conv2d(
+            num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1)
+        self.conv_final = torch.nn.Conv2d(
+            num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1)
+
+        self.linear = torch.nn.Linear(32 * 6 * 6, output_size)
+
+        self.elu = torch.nn.ELU(inplace=True)
+
+    def forward(self, state):
+        state = state.type(torch.float32)
+        state = state / 255
+
+        f_output = self.conv_f(state)
+        self.elu(f_output)
+        s_output = self.conv_s(f_output)
+        self.elu(s_output)
+        t_output = self.conv_t(s_output)
+        self.elu(t_output)
+        conv_final = self.conv_final(t_output)
+        self.elu(conv_final)
+
+        flatten = conv_final.view(conv_final.size(0), -1)
+        features = self.linear(flatten)
+        self.elu(features)
+
+        return features
+
+
+class ForwardModel(torch.nn.Module):
+    def __init__(self, f_layer_size):
+        super(ForwardModel, self).__init__()
+
+        self.f_layer = torch.nn.Linear(f_layer_size, 256)
+        self.s_layer = torch.nn.Linear(256, 288)
+        self.relu = torch.nn.ReLU(inplace=True)
+
+    def forward(self, features, action_indices):
+        concat_features = torch.cat(
+            (features, action_indices), dim=1)
+
+        self.relu(concat_features)
+        intermediate_res = self.f_layer(concat_features)
+        self.relu(intermediate_res)
+        pred_state = self.s_layer(intermediate_res)
+
+        return pred_state
+
+
+class InverseModel(torch.nn.Module):
+    def __init__(self, f_layer_size, action_size):
+        super(InverseModel, self).__init__()
+
+        self.f_layer = torch.nn.Linear(f_layer_size, 256)
+        self.s_layer = torch.nn.Linear(256, action_size)
+        self.softmax = torch.nn.Softmax(dim=1)
+
+    def forward(self, state_features, new_state_features):
+        concat_features = torch.cat((state_features, new_state_features), dim=1)
+
+        f_output = self.f_layer(concat_features)
+        s_output = self.s_layer(f_output)
+        pred_actions = self.softmax(s_output)
+
+        return pred_actions
 
 
 class PixelControlNetwork(torch.nn.Module):

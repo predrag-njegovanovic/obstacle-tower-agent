@@ -23,4 +23,8 @@ network_params = {
     "second_filters": 32,
     "convolution_output": 256,
     "hidden_state": 256,
+    "feature_ext_filters": 32,
+    "feature_output_size": 288,
+    "forward_model_f_layer": 342,
+    "inverse_model_f_layer": 576
 }

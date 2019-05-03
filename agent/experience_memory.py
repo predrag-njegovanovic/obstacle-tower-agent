@@ -32,7 +32,6 @@ class ExperienceMemory:
         self.value = deque(maxlen=memory_size)
         self.pixel_change = deque(maxlen=memory_size)
         self.action_indices = deque(maxlen=memory_size)
-        self.reward_action = deque(maxlen=memory_size)
         self.first_lstm_rhs = deque(maxlen=memory_size)
         self.second_lstm_rhs = deque(maxlen=memory_size)
         self.policy_values = deque(maxlen=memory_size)
@@ -64,7 +63,6 @@ class ExperienceMemory:
             self.reward.popleft()
             self.value.popleft()
             self.action_indices.popleft()
-            self.reward_action.popleft()
             self.done_state.popleft()
             self.pixel_change.popleft()
             self.policy_values.popleft()
@@ -80,8 +78,6 @@ class ExperienceMemory:
         self.reward.append(self.calculate_reward(reward, new_time, old_time, key))
         self.value.append(predicted_value)
         self.action_indices.append(action_encoding)
-        self.reward_action.append(
-            self.concatenate_reward_and_action(reward, action_encoding))
         self.done_state.append(done)
         self.pixel_change.append(self._calculate_pixel_change(
             new_state, old_state))
@@ -98,9 +94,9 @@ class ExperienceMemory:
     def last_frames(self):
         states = self.frame[-1]
         time = self.time[-1]
-        reward_actions = self.reward_action[-1]
+        action_indices = self.action_indices[-1]
 
-        return states, reward_actions.view(self.num_envs, self.action_size + 1), time
+        return states, action_indices.view(self.num_envs, self.action_size), time
 
     def sample_observations(self, sequence):
         batched_value = []
@@ -228,10 +224,10 @@ class ExperienceMemory:
                 reward[index] *= 10
 
             time_difference = new_time[index] - old_time[index]
-            # if time_difference <= 0:
-            #     diff[index] = 0
-            # else:
-            diff[index] = time_difference / 1000
+            if time_difference <= 0:
+                diff[index] = 0
+            else:
+                diff[index] = time_difference / 1000
 
         return reward + diff + 0.2 * key
 

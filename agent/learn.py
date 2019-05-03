@@ -64,7 +64,7 @@ if __name__ == "__main__":
         "--timesteps", type=int, default=2500000, help="Number of training steps."
     )
     parser.add_argument(
-        "--batch_size", type=int, default=20, help="Number of steps per epoch"
+        "--batch_size", type=int, default=128, help="Number of steps per epoch"
     )
     parser.add_argument(
         "--sequence-length",
@@ -93,9 +93,9 @@ if __name__ == "__main__":
     env = ParallelEnvironment(env_path, args.num_envs)
     env.start_parallel_execution()
 
-    learning_rate = log_uniform(args.lr_low_rate, args.lr_high_rate)
-    entropy_coeff = log_uniform(args.entropy_low_rate, args.entropy_high_rate)
-    pc_lambda = log_uniform(args.pc_low_rate, args.pc_high_rate)
+#     learning_rate = log_uniform(args.lr_low_rate, args.lr_high_rate)
+#     entropy_coeff = log_uniform(args.entropy_low_rate, args.entropy_high_rate)
+#     pc_lambda = log_uniform(args.pc_low_rate, args.pc_high_rate)
 
     agent = TowerAgent(
         action_size,
@@ -103,8 +103,10 @@ if __name__ == "__main__":
         config["second_filters"],
         config["convolution_output"],
         config["hidden_state"],
-        entropy_coeff=entropy_coeff,
-        pc_lambda=pc_lambda,
+        config["feature_ext_filters"],
+        config["feature_output_size"],
+        config["forward_model_f_layer"],
+        config["inverse_model_f_layer"],
     )
     agent.to_cuda()
     if args.use_cuda:
@@ -125,7 +127,7 @@ if __name__ == "__main__":
         args.sequence_length,
         args.epoches,
         args.timesteps,
-        learning_rate,
+        1e-4,
         device,
         args.ppo,
     )
