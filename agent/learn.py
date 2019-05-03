@@ -8,7 +8,7 @@ from agent.trainer import Trainer
 from agent.tower_agent import TowerAgent
 from agent.experience_memory import ExperienceMemory
 from agent.parallel_environment import ParallelEnvironment
-from agent.utils import create_action_space, log_uniform
+from agent.utils import create_action_space
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Obstacle Tower Agent")
@@ -61,7 +61,7 @@ if __name__ == "__main__":
                 from log uniform distribution(low, high).""",
     )
     parser.add_argument(
-        "--timesteps", type=int, default=2500000, help="Number of training steps."
+        "--timesteps", type=int, default=5000000, help="Number of training steps."
     )
     parser.add_argument(
         "--batch_size", type=int, default=128, help="Number of steps per epoch"
@@ -92,10 +92,6 @@ if __name__ == "__main__":
     env_path = definitions.OBSTACLE_TOWER_PATH
     env = ParallelEnvironment(env_path, args.num_envs)
     env.start_parallel_execution()
-
-#     learning_rate = log_uniform(args.lr_low_rate, args.lr_high_rate)
-#     entropy_coeff = log_uniform(args.entropy_low_rate, args.entropy_high_rate)
-#     pc_lambda = log_uniform(args.pc_low_rate, args.pc_high_rate)
 
     agent = TowerAgent(
         action_size,

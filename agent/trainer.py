@@ -62,15 +62,14 @@ class Trainer:
         )
 
         for timestep in range(num_of_updates):
-            pi_loss, val_loss, ent, reward = self._fill_experience(
-                action_size)
+            pi_loss, val_loss, ent, reward = self._fill_experience(action_size)
             self.writer.add_scalar("tower/rewards", reward, timestep)
             self.writer.add_scalar("tower/policy_loss", pi_loss, timestep)
             self.writer.add_scalar("tower/value_loss", val_loss, timestep)
             self.writer.add_scalar("tower/entropy_loss", ent, timestep)
             self.writer.add_scalar("tower/lr", np.array(lr_scheduler.get_lr()), timestep)
 
-            lr_scheduler.step()
+            # lr_scheduler.step()
             if timestep % 100 == 0:
                 name = "ppo" if self.ppo else "a2c"
                 path = os.path.join(

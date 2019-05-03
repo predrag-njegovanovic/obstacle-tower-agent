@@ -25,7 +25,7 @@ class TowerAgent(torch.nn.Module):
 
         super(TowerAgent, self).__init__()
 
-        self.conv_network = base_networks.ConvNetwork(
+        self.conv_network = base_networks.BaseNetwork(
             first_layer_filters, second_layer_filters, conv_output_size
         )
         self.lstm_network = base_networks.LSTMNetwork(

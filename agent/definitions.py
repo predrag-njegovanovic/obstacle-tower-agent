@@ -19,7 +19,7 @@ ACTION_TURN = [0, 1, 2]
 ACTION_JUMP = [0, 1]
 
 network_params = {
-    "first_filters": 16,
+    "first_filters": 32,
     "second_filters": 32,
     "convolution_output": 256,
     "hidden_state": 256,

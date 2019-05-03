@@ -1,39 +1,68 @@
 import torch
+import numpy as np
 
 
-class ConvNetwork(torch.nn.Module):
+def _init_module_weights(module, gain='relu'):
+    gain_init = 1 if gain == 'constant' else torch.nn.init.calculate_gain(gain)
+    torch.nn.init.orthogonal_(module.weight.data, gain=gain_init)
+    torch.nn.init.constant_(module.bias.data, 0)
+    return module
+
+
+class BaseNetwork(torch.nn.Module):
     def __init__(self, first_layer_filters, second_layer_filters, out_features):
-        super(ConvNetwork, self).__init__()
+        super(BaseNetwork, self).__init__()
 
         self.conv1 = torch.nn.Conv2d(
             in_channels=3,
             out_channels=first_layer_filters,
-            kernel_size=(8, 8),
-            stride=4,
+            kernel_size=3,
+            stride=2,
+            padding=1
         )
         self.conv2 = torch.nn.Conv2d(
             in_channels=first_layer_filters,
             out_channels=second_layer_filters,
-            kernel_size=(4, 4),
+            kernel_size=3,
             stride=2,
+            padding=1
+        )
+        self.conv3 = torch.nn.Conv2d(
+            in_channels=second_layer_filters,
+            out_channels=second_layer_filters,
+            kernel_size=3,
+            stride=2,
+            padding=1
+        )
+        self.conv4 = torch.nn.Conv2d(
+            in_channels=second_layer_filters,
+            out_channels=second_layer_filters,
+            kernel_size=3,
+            stride=2,
+            padding=1
         )
 
-        self.fully_connected = torch.nn.Linear(2592, out_features)
-        self.relu = torch.nn.ReLU(inplace=True)
+        self.fully_connected = torch.nn.Linear(32 * 6 * 6, out_features)
+        self.elu = torch.nn.ELU(inplace=True)
 
     def forward(self, inputs):
         new_input = inputs.type(torch.float32)
         new_input = new_input / 255
 
         conv1_out = self.conv1(new_input)
-        self.relu(conv1_out)
+        self.elu(conv1_out)
 
         conv2_out = self.conv2(conv1_out)
-        self.relu(conv2_out)
+        self.elu(conv2_out)
 
-        fc_input = conv2_out.view(conv2_out.size(0), -1)
+        conv3_out = self.conv3(conv2_out)
+        self.elu(conv3_out)
+
+        conv4_out = self.conv4(conv3_out)
+        self.elu(conv4_out)
+
+        fc_input = conv4_out.view(conv4_out.size(0), -1)
         linear_out = self.fully_connected(fc_input)
-        self.relu(linear_out)
 
         return linear_out
 
@@ -62,7 +91,8 @@ class ValueNetwork(torch.nn.Module):
     def __init__(self):
         super(ValueNetwork, self).__init__()
 
-        self.value = torch.nn.Linear(in_features=256, out_features=1)
+        self.value = _init_module_weights(
+            torch.nn.Linear(in_features=256, out_features=1))
 
     def forward(self, inputs):
         """
@@ -106,7 +136,6 @@ class FeatureExtractor(torch.nn.Module):
             num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1)
 
         self.linear = torch.nn.Linear(32 * 6 * 6, output_size)
-
         self.elu = torch.nn.ELU(inplace=True)
 
     def forward(self, state):

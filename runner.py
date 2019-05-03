@@ -11,8 +11,8 @@ from agent.parallel_environment import prepare_state
 
 
 def greedy_policy(action_space, policy):
-    probs = torch.distributions.Categorical
-    # index = probs(logits=policy).sample()
+    # probs = torch.distributions.Categorical
+    # index = probs(probs=policy).sample()
     pi = torch.exp(policy)
     index = torch.argmax(pi)
     return action_space[index], index
@@ -57,6 +57,10 @@ if __name__ == "__main__":
         config["second_filters"],
         config["convolution_output"],
         config["hidden_state"],
+        config["feature_ext_filters"],
+        config["feature_output_size"],
+        config["forward_model_f_layer"],
+        config["inverse_model_f_layer"],
     )
 
     agent.load_state_dict(torch.load(model_name))
