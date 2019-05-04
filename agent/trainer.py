@@ -58,18 +58,20 @@ class Trainer:
         action_size = len(self.action_space)
 
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optim, lr_lambda=lambda step: (num_of_updates - step) / num_of_updates
+            self.optim, lr_lambda=lambda step: 1 - (step / float(num_of_updates))
         )
 
         for timestep in range(num_of_updates):
-            pi_loss, val_loss, ent, reward = self._fill_experience(action_size)
+            pi_loss, val_loss, ent, reward, fwd, inv = self._fill_experience(action_size)
             self.writer.add_scalar("tower/rewards", reward, timestep)
             self.writer.add_scalar("tower/policy_loss", pi_loss, timestep)
             self.writer.add_scalar("tower/value_loss", val_loss, timestep)
             self.writer.add_scalar("tower/entropy_loss", ent, timestep)
+            self.writer.add_scalar("tower/forward_loss", fwd, timestep)
+            self.writer.add_scalar("tower/inverse_loss", inv, timestep)
             self.writer.add_scalar("tower/lr", np.array(lr_scheduler.get_lr()), timestep)
 
-            # lr_scheduler.step()
+            lr_scheduler.step()
             if timestep % 100 == 0:
                 name = "ppo" if self.ppo else "a2c"
                 path = os.path.join(
@@ -128,6 +130,7 @@ class Trainer:
                     old_state, new_state, action_encoding)
 
                 reward = self.experience.calculate_reward(reward, new_time, old_time, key)
+                reward = torch.clamp(reward, -1, 1)
                 reward_acc += reward.mean()
                 reward_e_i = reward + reward_i.cpu()
 
@@ -179,16 +182,16 @@ class Trainer:
         rewards = torch.stack(rewards)
         dones = torch.stack(dones)
 
-        agent_loss, pi_loss, value_loss, ent = self.base_loss(action_size,
-                                                              state_tensor,
-                                                              action_indices,
-                                                              rewards,
-                                                              values,
-                                                              policy_tensor,
-                                                              hidden_state,
-                                                              dones,
-                                                              state_f_tensor,
-                                                              new_state_f_tensor)
+        agent_loss, pi_loss, value_loss, ent, fwd, inv = self.base_loss(action_size,
+                                                                        state_tensor,
+                                                                        action_indices,
+                                                                        rewards,
+                                                                        values,
+                                                                        policy_tensor,
+                                                                        hidden_state,
+                                                                        dones,
+                                                                        state_f_tensor,
+                                                                        new_state_f_tensor)
         loss = agent_loss
 
         self.optim.zero_grad()
@@ -196,7 +199,7 @@ class Trainer:
         self.optim.step()
 
         print("Hits in episode run: {}".format(counter))
-        return pi_loss, value_loss, ent, reward_acc
+        return pi_loss, value_loss, ent, reward_acc, fwd, inv
 
     def base_loss(
         self,
@@ -226,9 +229,8 @@ class Trainer:
             batch_returns.append(returns)
 
         advantage = torch.cat(batch_advantages, dim=0)
-        advantage = (advantage - torch.mean(advantage, dim=0)) / torch.std(
-            advantage + 1e-6
-        )
+        advantage = (advantage - torch.mean(advantage, dim=0)) / \
+            torch.std(advantage) + 1e-6
 
         new_value, policy_acts, _ = self.agent_network.act(
             states, action_indices, base_rhs
@@ -245,8 +247,8 @@ class Trainer:
                 old_policy, policy_acts, advantage, returns, new_value, action_indices
             )
         else:
-            agent_loss, pi_loss, v_loss, entropy = self.agent_network.a2c_loss(
+            agent_loss, pi_loss, v_loss, entropy, fwd_loss, inv_loss = self.agent_network.a2c_loss(
                 policy_acts, advantage, returns, new_value, action_indices,
                 new_state_features, batch_predicted_states, batch_predicted_acts)
 
-        return agent_loss, pi_loss, v_loss, entropy
+        return agent_loss, pi_loss, v_loss, entropy, fwd_loss, inv_loss

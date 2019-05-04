@@ -1,16 +1,17 @@
-import cv2
 import torch
-import numpy as np
 
 from multiprocessing import Process, Pipe
 from obstacle_tower_env import ObstacleTowerEnv
+
+from agent.utils import prepare_state
 
 
 def start_environment(connection, worker_id, env_path, retro, realtime_mode):
     obstacle_tower = ObstacleTowerEnv(
         env_path, worker_id=worker_id, retro=retro, timeout_wait=90, realtime_mode=False
     )
-    # obstacle_tower.seed(worker_id)
+    obstacle_tower.seed(0)
+    obstacle_tower.floor(1)
     obstacle_tower.reset()
     while True:
         command, action = connection.recv()
@@ -20,7 +21,7 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
             cumulative_reward = 0
 
             # frame skipping
-            for _ in range(2):
+            for _ in range(4):
                 observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time = observation
                 cumulative_reward += reward
@@ -36,17 +37,6 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
             connection.send((prepare_state(state).tolist(), keys, time))
         elif command == "close":
             connection.close()
-
-
-def prepare_state(state):
-    """
-    Convert array to pytorch.Tensor and reshape it as (C, H, W)
-    """
-    frame = cv2.resize(state, (84, 84))
-    height, width, channels = frame.shape
-    frame = frame * 255
-    reshaped_frame = np.reshape(frame.astype(np.uint8), (channels, height, width))
-    return reshaped_frame
 
 
 class ParallelEnvironment:

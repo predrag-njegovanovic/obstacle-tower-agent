@@ -6,7 +6,7 @@ import agent.definitions as definitions
 
 from obstacle_tower_env import ObstacleTowerEnv
 from agent.tower_agent import TowerAgent
-from agent.utils import create_action_space
+from agent.utils import create_action_space, mean_std_obs
 from agent.parallel_environment import prepare_state
 
 
@@ -43,6 +43,7 @@ if __name__ == "__main__":
 
     env_path = definitions.OBSTACLE_TOWER_PATH
     model_name = os.path.join(definitions.MODEL_PATH, args.model_name)
+    obs_mean, obs_std = mean_std_obs(10000)
 
     env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True)
     env.seed(args.seed)
@@ -61,6 +62,8 @@ if __name__ == "__main__":
         config["feature_output_size"],
         config["forward_model_f_layer"],
         config["inverse_model_f_layer"],
+        obs_mean,
+        obs_std
     )
 
     agent.load_state_dict(torch.load(model_name))

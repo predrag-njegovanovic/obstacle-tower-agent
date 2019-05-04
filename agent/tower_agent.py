@@ -15,6 +15,8 @@ class TowerAgent(torch.nn.Module):
         feature_output_size,
         forward_model_f_layer,
         inverse_model_f_layer,
+        obs_mean,
+        obs_std,
         entropy_coeff=0.01,
         value_coeff=0.5,
         pc_lambda=0.01,
@@ -26,13 +28,13 @@ class TowerAgent(torch.nn.Module):
         super(TowerAgent, self).__init__()
 
         self.conv_network = base_networks.BaseNetwork(
-            first_layer_filters, second_layer_filters, conv_output_size
+            first_layer_filters, second_layer_filters, conv_output_size, obs_mean, obs_std
         )
         self.lstm_network = base_networks.LSTMNetwork(
             conv_output_size, hidden_state_size, action_size
         )
         self.feature_extractor = base_networks.FeatureExtractor(
-            feature_ext_filters, feature_output_size)
+            feature_ext_filters, feature_output_size, obs_mean, obs_std)
         self.forward_model = base_networks.ForwardModel(forward_model_f_layer)
         self.inverse_model = base_networks.InverseModel(
             inverse_model_f_layer, action_size)
@@ -86,7 +88,7 @@ class TowerAgent(torch.nn.Module):
         q_aux, q_aux_max = self.pc_network(features)
         return q_aux, q_aux_max
 
-    def icm_act(self, state, new_state, action_indices, eta=1):
+    def icm_act(self, state, new_state, action_indices, eta=0.01):
         state_features = self.feature_extractor(state)
         new_state_features = self.feature_extractor(new_state)
 
@@ -131,7 +133,7 @@ class TowerAgent(torch.nn.Module):
         loss = self.isc_lambda * a2c_loss + \
             (1 - self.beta) * inv_loss + self.beta * fwd_loss
 
-        return loss, policy_loss, value_loss, entropy
+        return loss, policy_loss, value_loss, entropy, fwd_loss, inv_loss
 
     def pc_loss(self, action_size, action_indices, q_aux, pc_returns):
         reshaped_indices = action_indices.view(-1, action_size, 1, 1).cuda()

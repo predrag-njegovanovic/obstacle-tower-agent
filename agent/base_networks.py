@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 
 def _init_module_weights(module, gain='relu'):
@@ -10,11 +9,11 @@ def _init_module_weights(module, gain='relu'):
 
 
 class BaseNetwork(torch.nn.Module):
-    def __init__(self, first_layer_filters, second_layer_filters, out_features):
+    def __init__(self, first_layer_filters, second_layer_filters, out_features, obs_mean, obs_std):
         super(BaseNetwork, self).__init__()
 
         self.conv1 = torch.nn.Conv2d(
-            in_channels=3,
+            in_channels=1,
             out_channels=first_layer_filters,
             kernel_size=3,
             stride=2,
@@ -41,12 +40,15 @@ class BaseNetwork(torch.nn.Module):
             stride=2,
             padding=1
         )
+        self.mean = obs_mean
+        self.std = obs_std
 
         self.fully_connected = torch.nn.Linear(32 * 6 * 6, out_features)
         self.elu = torch.nn.ELU(inplace=True)
 
     def forward(self, inputs):
         new_input = inputs.type(torch.float32)
+        new_input = (new_input - self.mean) / (self.std + 1e-6)
         new_input = new_input / 255
 
         conv1_out = self.conv1(new_input)
@@ -123,11 +125,11 @@ class PolicyNetwork(torch.nn.Module):
 
 
 class FeatureExtractor(torch.nn.Module):
-    def __init__(self, num_of_filters, output_size):
+    def __init__(self, num_of_filters, output_size, obs_mean, obs_std):
         super(FeatureExtractor, self).__init__()
 
         self.conv_f = torch.nn.Conv2d(
-            3, num_of_filters, kernel_size=3, stride=2, padding=1)
+            1, num_of_filters, kernel_size=3, stride=2, padding=1)
         self.conv_s = torch.nn.Conv2d(
             num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1)
         self.conv_t = torch.nn.Conv2d(
@@ -137,9 +139,12 @@ class FeatureExtractor(torch.nn.Module):
 
         self.linear = torch.nn.Linear(32 * 6 * 6, output_size)
         self.elu = torch.nn.ELU(inplace=True)
+        self.mean = obs_mean
+        self.std = obs_std
 
     def forward(self, state):
         state = state.type(torch.float32)
+        state = (state - self.mean) / (self.std + 1e-6)
         state = state / 255
 
         f_output = self.conv_f(state)
@@ -184,13 +189,16 @@ class InverseModel(torch.nn.Module):
 
         self.f_layer = torch.nn.Linear(f_layer_size, 256)
         self.s_layer = torch.nn.Linear(256, action_size)
+        self.relu = torch.nn.ReLU(inplace=True)
         self.softmax = torch.nn.Softmax(dim=1)
 
     def forward(self, state_features, new_state_features):
         concat_features = torch.cat((state_features, new_state_features), dim=1)
 
         f_output = self.f_layer(concat_features)
+        self.relu(f_output)
         s_output = self.s_layer(f_output)
+        self.relu(s_output)
         pred_actions = self.softmax(s_output)
 
         return pred_actions

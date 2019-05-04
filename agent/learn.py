@@ -8,7 +8,7 @@ from agent.trainer import Trainer
 from agent.tower_agent import TowerAgent
 from agent.experience_memory import ExperienceMemory
 from agent.parallel_environment import ParallelEnvironment
-from agent.utils import create_action_space
+from agent.utils import create_action_space, mean_std_obs
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Obstacle Tower Agent")
@@ -92,6 +92,7 @@ if __name__ == "__main__":
     env_path = definitions.OBSTACLE_TOWER_PATH
     env = ParallelEnvironment(env_path, args.num_envs)
     env.start_parallel_execution()
+    obs_mean, obs_std = mean_std_obs(10000)
 
     agent = TowerAgent(
         action_size,
@@ -103,6 +104,8 @@ if __name__ == "__main__":
         config["feature_output_size"],
         config["forward_model_f_layer"],
         config["inverse_model_f_layer"],
+        obs_mean,
+        obs_std
     )
     agent.to_cuda()
     if args.use_cuda:
