@@ -46,6 +46,7 @@ if __name__ == "__main__":
     obs_mean, obs_std = mean_std_obs(10000)
 
     env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True)
+    env.floor(1)
     env.seed(args.seed)
 
     config = definitions.network_params

@@ -13,7 +13,7 @@ class BaseNetwork(torch.nn.Module):
         super(BaseNetwork, self).__init__()
 
         self.conv1 = torch.nn.Conv2d(
-            in_channels=1,
+            in_channels=3,
             out_channels=first_layer_filters,
             kernel_size=3,
             stride=2,
@@ -49,7 +49,6 @@ class BaseNetwork(torch.nn.Module):
     def forward(self, inputs):
         new_input = inputs.type(torch.float32)
         new_input = (new_input - self.mean) / (self.std + 1e-6)
-        new_input = new_input / 255
 
         conv1_out = self.conv1(new_input)
         self.elu(conv1_out)
@@ -129,7 +128,7 @@ class FeatureExtractor(torch.nn.Module):
         super(FeatureExtractor, self).__init__()
 
         self.conv_f = torch.nn.Conv2d(
-            1, num_of_filters, kernel_size=3, stride=2, padding=1)
+            3, num_of_filters, kernel_size=3, stride=2, padding=1)
         self.conv_s = torch.nn.Conv2d(
             num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1)
         self.conv_t = torch.nn.Conv2d(
@@ -145,7 +144,6 @@ class FeatureExtractor(torch.nn.Module):
     def forward(self, state):
         state = state.type(torch.float32)
         state = (state - self.mean) / (self.std + 1e-6)
-        state = state / 255
 
         f_output = self.conv_f(state)
         self.elu(f_output)

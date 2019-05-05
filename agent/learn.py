@@ -20,7 +20,7 @@ if __name__ == "__main__":
         help="Number of parallel environment to train on.",
     )
     parser.add_argument(
-        "--observation_size", type=int, default=2000, help="Size of experience memory."
+        "--observation_size", type=int, default=128, help="Size of experience memory."
     )
     parser.add_argument(
         "--lr_low_rate",
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--epoches",
         type=int,
-        default=16,
+        default=8,
         help="Number of updates once the experience memory is filled.",
     )
     parser.add_argument(

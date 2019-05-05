@@ -88,7 +88,7 @@ class TowerAgent(torch.nn.Module):
         q_aux, q_aux_max = self.pc_network(features)
         return q_aux, q_aux_max
 
-    def icm_act(self, state, new_state, action_indices, eta=0.01):
+    def icm_act(self, state, new_state, action_indices, eta=0.1):
         state_features = self.feature_extractor(state)
         new_state_features = self.feature_extractor(new_state)
 

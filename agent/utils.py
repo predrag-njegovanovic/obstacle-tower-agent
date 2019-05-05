@@ -12,11 +12,10 @@ def prepare_state(state):
     """
     Convert array to pytorch.Tensor and reshape it as (C, H, W)
     """
-    state = cv2.cvtColor(state.astype('float32'), cv2.COLOR_RGB2GRAY)
     frame = cv2.resize(state, (84, 84), interpolation=cv2.INTER_AREA)
-    height, width = frame.shape
+    height, width, channel = frame.shape
     frame = frame * 255
-    reshaped_frame = np.reshape(frame.astype(np.uint8), (1, height, width))
+    reshaped_frame = np.reshape(frame.astype(np.uint8), (channel, height, width))
     return reshaped_frame
 
 
