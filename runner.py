@@ -13,8 +13,7 @@ from agent.parallel_environment import prepare_state
 def greedy_policy(action_space, policy):
     # probs = torch.distributions.Categorical
     # index = probs(probs=policy).sample()
-    pi = torch.exp(policy)
-    index = torch.argmax(pi)
+    index = torch.argmax(policy)
     return action_space[index], index
 
 
@@ -46,8 +45,9 @@ if __name__ == "__main__":
     obs_mean, obs_std = mean_std_obs(10000)
 
     env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True)
-    env.floor(1)
     env.seed(args.seed)
+    env.floor(1)
+    env.reset()
 
     config = definitions.network_params
     actions = create_action_space()
@@ -64,7 +64,7 @@ if __name__ == "__main__":
         config["forward_model_f_layer"],
         config["inverse_model_f_layer"],
         obs_mean,
-        obs_std
+        obs_std,
     )
 
     agent.load_state_dict(torch.load(model_name))
@@ -86,8 +86,10 @@ if __name__ == "__main__":
     action, action_index = greedy_policy(actions, policy)
     action_encoding[action_index] = 1
     while True:
-        obs, reward, done, _ = env.step(action)
-        frame, _, _ = obs
+        for _ in range(4):
+            obs, reward, done, _ = env.step(action)
+            frame, _, _ = obs
+
         state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
         if done:
             break

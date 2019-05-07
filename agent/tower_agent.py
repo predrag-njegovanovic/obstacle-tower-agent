@@ -17,27 +17,33 @@ class TowerAgent(torch.nn.Module):
         inverse_model_f_layer,
         obs_mean,
         obs_std,
-        entropy_coeff=0.01,
+        entropy_coeff=0.0001,
         value_coeff=0.5,
         pc_lambda=0.01,
         ppo_epsilon=0.2,
         beta=0.2,
-        isc_lambda=0.1
+        isc_lambda=0.1,
     ):
 
         super(TowerAgent, self).__init__()
 
         self.conv_network = base_networks.BaseNetwork(
-            first_layer_filters, second_layer_filters, conv_output_size, obs_mean, obs_std
+            first_layer_filters,
+            second_layer_filters,
+            conv_output_size,
+            obs_mean,
+            obs_std,
         )
-        self.lstm_network = base_networks.LSTMNetwork(
+        self.lstm_network = base_networks.GRUNetwork(
             conv_output_size, hidden_state_size, action_size
         )
         self.feature_extractor = base_networks.FeatureExtractor(
-            feature_ext_filters, feature_output_size, obs_mean, obs_std)
+            feature_ext_filters, feature_output_size, obs_mean, obs_std
+        )
         self.forward_model = base_networks.ForwardModel(forward_model_f_layer)
         self.inverse_model = base_networks.InverseModel(
-            inverse_model_f_layer, action_size)
+            inverse_model_f_layer, action_size
+        )
         # self.pc_network = base_networks.PixelControlNetwork(action_size)
 
         self.value = base_networks.ValueNetwork()
@@ -94,18 +100,22 @@ class TowerAgent(torch.nn.Module):
 
         pred_state = self.forward_model(state_features, action_indices)
 
-        intrinsic_reward = (eta / 2) * \
-            torch.mean(torch.pow(pred_state - new_state_features, 2), dim=1)
+        intrinsic_reward = (eta / 2) * torch.mean(
+            torch.pow(pred_state - new_state_features, 2), dim=1
+        )
 
         return intrinsic_reward, state_features, new_state_features
 
     def forward_act(self, batch_state_features, batch_action_indices):
-        batch_pred_state = self.forward_model(batch_state_features, batch_action_indices)
+        batch_pred_state = self.forward_model(
+            batch_state_features, batch_action_indices
+        )
         return batch_pred_state
 
     def inverse_act(self, batch_state_features, batch_new_state_features):
         batch_pred_acts = self.inverse_model(
-            batch_state_features, batch_new_state_features)
+            batch_state_features, batch_new_state_features
+        )
         return batch_pred_acts
 
     def ppo_loss(self, old_policy, policy, advantage, returns, values, action_indices):
@@ -119,19 +129,33 @@ class TowerAgent(torch.nn.Module):
 
         return loss, policy_loss, value_loss, entropy
 
-    def a2c_loss(self, policy, advantage, returns, values,
-                 action_indices, new_state_features, new_state_preds, pred_acts):
+    def a2c_loss(
+        self,
+        policy,
+        advantage,
+        returns,
+        values,
+        action_indices,
+        new_state_features,
+        new_state_preds,
+        pred_acts,
+    ):
 
         policy_loss = self.policy_loss(policy, advantage, action_indices)
         value_loss = self.value_loss(returns, values)
         entropy = self.entropy(policy)
 
-        a2c_loss = policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
+        a2c_loss = (
+            policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
+        )
         fwd_loss = self.forward_loss(new_state_features, new_state_preds)
         inv_loss = self.inverse_loss(pred_acts, action_indices.detach())
 
-        loss = self.isc_lambda * a2c_loss + \
-            (1 - self.beta) * inv_loss + self.beta * fwd_loss
+        loss = (
+            self.isc_lambda * a2c_loss
+            + (1 - self.beta) * inv_loss
+            + self.beta * fwd_loss
+        )
 
         return loss, policy_loss, value_loss, entropy, fwd_loss, inv_loss
 
@@ -141,8 +165,9 @@ class TowerAgent(torch.nn.Module):
 
         pc_q_aux_sum = torch.sum(pc_q_aux, dim=1, keepdim=False)
 
-        pc_loss = 0.5 * \
-            self.pc_lambda * torch.mean(torch.pow(pc_returns - pc_q_aux_sum, 2))
+        pc_loss = (
+            0.5 * self.pc_lambda * torch.mean(torch.pow(pc_returns - pc_q_aux_sum, 2))
+        )
         return pc_loss
 
     def forward_loss(self, new_state_features, new_state_pred):
@@ -150,7 +175,9 @@ class TowerAgent(torch.nn.Module):
         return fwd_loss
 
     def inverse_loss(self, pred_acts, action_indices):
-        inv_loss = self.cross_entropy_loss(pred_acts, torch.argmax(action_indices, dim=1))
+        inv_loss = self.cross_entropy_loss(
+            pred_acts, torch.argmax(action_indices, dim=1)
+        )
 
         return inv_loss
 

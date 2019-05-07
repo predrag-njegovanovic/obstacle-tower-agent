@@ -105,7 +105,7 @@ if __name__ == "__main__":
         config["forward_model_f_layer"],
         config["inverse_model_f_layer"],
         obs_mean,
-        obs_std
+        obs_std,
     )
     agent.to_cuda()
     if args.use_cuda:
@@ -126,7 +126,7 @@ if __name__ == "__main__":
         args.sequence_length,
         args.epoches,
         args.timesteps,
-        1e-4,
+        1e-5,
         device,
         args.ppo,
     )
