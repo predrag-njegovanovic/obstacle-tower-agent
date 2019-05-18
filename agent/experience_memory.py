@@ -26,6 +26,7 @@ class ExperienceMemory:
             torch.zeros((memory_size, num_envs, 3, 84, 84)).type(torch.uint8).to(device)
         )
         self.reward = torch.zeros((memory_size, num_envs))
+        self.old_time = torch.zeros((memory_size, num_envs))
         self.done_state = torch.zeros((memory_size, num_envs))
         self.value = torch.zeros((memory_size, num_envs)).to(device)
         self.action_indices = torch.zeros((memory_size, num_envs, action_size)).to(
@@ -35,7 +36,6 @@ class ExperienceMemory:
             device
         )
         self.first_lstm_rhs = torch.zeros((memory_size, 1, num_envs, 512)).to(device)
-        # self.second_lstm_rhs = torch.zeros((memory_size, 1, num_envs, 256)).to(device)
         self.policy_values = torch.zeros((memory_size, num_envs, action_size)).to(
             device
         )
@@ -45,6 +45,7 @@ class ExperienceMemory:
     def empty(self):
         self.frame[0].copy_(self.frame[-1])
         self.reward_action[0].copy_(self.reward_action[-1])
+        self.old_time[0].copy_(self.old_time[-1])
         self.memory_pointer = 0
 
     def add_experience(
@@ -52,11 +53,11 @@ class ExperienceMemory:
         new_state,
         old_state,
         reward,
+        old_time,
         action_encoding,
         done,
         predicted_value,
         rhs_first,
-        # rhs_second,
         policy,
         state_f,
         new_state_f,
@@ -64,6 +65,7 @@ class ExperienceMemory:
 
         self.frame[self.memory_pointer].copy_(new_state)
         self.reward[self.memory_pointer].copy_(reward)
+        self.old_time[self.memory_pointer].copy_(old_time)
         self.value[self.memory_pointer].copy_(predicted_value)
         self.action_indices[self.memory_pointer].copy_(action_encoding)
         self.reward_action[self.memory_pointer].copy_(
@@ -71,7 +73,6 @@ class ExperienceMemory:
         )
         self.done_state[self.memory_pointer].copy_(done)
         self.first_lstm_rhs[self.memory_pointer].copy_(rhs_first)
-        # self.second_lstm_rhs[self.memory_pointer].copy_(rhs_second)
         self.policy_values[self.memory_pointer].copy_(policy)
         self.state_f[self.memory_pointer].copy_(state_f)
         self.new_state_f[self.memory_pointer].copy_(new_state_f)
@@ -82,47 +83,39 @@ class ExperienceMemory:
     def last_frames(self):
         states = self.frame[self.memory_pointer - 1]
         reward_actions = self.reward_action[self.memory_pointer - 1]
+        old_time = self.old_time[self.memory_pointer - 1]
 
-        return states, reward_actions
+        return states, reward_actions, old_time
 
-    def reward_mean(self):
-        mean = self.reward.mean().item()
-        min_reward = self.reward.min().item()
-        max_reward = self.reward.max().item()
-
-        return mean, min_reward, max_reward
-
-    def on_policy_sampling(self):
+    def on_policy_sampling(self, running_reward_std):
         batched_value = []
         batched_states = []
         batched_reward = []
         batched_action_indices = []
         batched_first_rhs = []
-        # batched_second_rhs = []
         batched_policy = []
         batched_dones = []
         batched_state_f = []
         batched_new_state_f = []
 
         env = random.randint(0, self.num_envs - 1)
+        last_element = self.memory_pointer - 1
 
-        states = self.frame[:, env, :, :, :]
-        rewards = self.reward[:, env]
-        values = self.value[:, env]
-        action_indices = self.action_indices[:, env, :]
-        first_rhs = self.first_lstm_rhs[:, :, env, :]
-        # second_rhs = self.second_lstm_rhs[:, :, env, :]
-        policies = self.policy_values[:, env, :]
-        dones = self.done_state[:, env]
-        states_f = self.state_f[:, env, :]
-        new_states_f = self.new_state_f[:, env, :]
+        states = self.frame[:last_element, env, :, :, :]
+        rewards = self.reward[:last_element, env] / running_reward_std[env]
+        values = self.value[:last_element, env]
+        action_indices = self.action_indices[:last_element, env, :]
+        first_rhs = self.first_lstm_rhs[:last_element, :, env, :]
+        policies = self.policy_values[:last_element, env, :]
+        dones = self.done_state[:last_element, env]
+        states_f = self.state_f[:last_element, env, :]
+        new_states_f = self.new_state_f[:last_element, env, :]
 
         batched_value.append(values)
         batched_states.append(states)
         batched_reward.append(rewards)
         batched_action_indices.append(action_indices)
         batched_first_rhs.append(first_rhs)
-        # batched_second_rhs.append(second_rhs)
         batched_policy.append(policies)
         batched_dones.append(dones)
         batched_state_f.append(states_f)
@@ -166,71 +159,15 @@ class ExperienceMemory:
 
         return returns
 
-    def compute_pc_returns(self, q_aux, rewards, pixel_controls, dones, gamma=0.9):
-        num_steps, height, width = pixel_controls.shape
-
-        pc_returns = torch.zeros((num_steps, height, width)).to(self.device)
-        if not dones[-1]:
-            pc_returns[-1] = q_aux
-
-        for step in reversed(range(num_steps - 1)):
-            pc_returns[step] = pixel_controls[step] + gamma * pc_returns[step + 1]
-
-        return pc_returns
-
-    def compute_v_returns(self, rewards, values, dones, gamma=1.0):
-        num_steps = values.shape[0]
-
-        v_returns = np.zeros((num_steps))
-        if not dones[-1]:
-            v_returns[-1] = values[-1]
-
-        for step in reversed(range(num_steps - 1)):
-            v_returns[step] = rewards[step] + gamma * v_returns[step + 1]
-
-        return v_returns
-
     def calculate_reward(self, reward, new_time, old_time, key):
         """
         Scale time difference between two steps to [0, 1] range and add to reward.
         """
         for index, _ in enumerate(reward):
-            if reward[index] == 0.1 or reward[index] == 0.2:
-                reward[index] *= 10
-
-            # time_difference = new_time[index] - old_time[index]
-            # diff[index] = time_difference / 1000
+            time_difference = old_time[index] - new_time[index]
+            reward[index] = reward[index] - (time_difference / 1000)
 
         return reward
-
-    def _subsample(self, frame_mean_diff, piece_size=4):
-        shapes = frame_mean_diff.shape
-        subsamples_shape = (
-            self.num_envs,
-            shapes[1] // piece_size,
-            piece_size,
-            shapes[2] // piece_size,
-            piece_size,
-        )
-        reshaped_frame = frame_mean_diff.reshape(subsamples_shape)
-        reshaped_mean = torch.mean(reshaped_frame, -1)
-        pc_output = torch.mean(reshaped_mean, 2)
-        return pc_output
-
-    def _calculate_pixel_change(self, new_state, old_state):
-        """
-        Calculate pixel change between two states by creating
-        frame differences and then subsampling it to twenty 4x4 pieces.
-        """
-        new_state = new_state.type(torch.float32) / 255
-        old_state = old_state.type(torch.float32) / 255
-
-        frame_diff = torch.abs(
-            new_state[:, :, 2:-2, 2:-2] - old_state[:, :, 2:-2, 2:-2]
-        )
-        frame_mean = torch.mean(frame_diff, dim=1, keepdim=False)
-        subsampled_frame = self._subsample(frame_mean)
-        return subsampled_frame
 
     def concatenate_reward_and_action(self, reward, action_encoding):
         """

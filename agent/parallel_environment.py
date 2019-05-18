@@ -10,8 +10,6 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
     obstacle_tower = ObstacleTowerEnv(
         env_path, worker_id=worker_id, retro=retro, timeout_wait=90, realtime_mode=False
     )
-    obstacle_tower.seed(0)
-    obstacle_tower.floor(1)
     obstacle_tower.reset()
     while True:
         command, action = connection.recv()
@@ -21,9 +19,13 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
             cumulative_reward = 0
 
             # frame skipping
-            for _ in range(4):
+            for i in range(6):
                 observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time = observation
+
+                if reward > 0:
+                    reward = 1
+
                 cumulative_reward += reward
 
                 if done:

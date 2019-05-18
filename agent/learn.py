@@ -23,44 +23,6 @@ if __name__ == "__main__":
         "--observation_size", type=int, default=128, help="Size of experience memory."
     )
     parser.add_argument(
-        "--lr_low_rate",
-        type=float,
-        default=1e-3,
-        help="Learning rate is sampled from log uniform distribution(low, high).",
-    )
-    parser.add_argument(
-        "--lr_high_rate",
-        type=float,
-        default=5e-4,
-        help="Learning rate is sampled from log uniform distribution(low, high).",
-    )
-    parser.add_argument(
-        "--entropy_low_rate",
-        type=float,
-        default=5e-4,
-        help="Entropy coefficient is sampled from log uniform distribution(low, high).",
-    )
-    parser.add_argument(
-        "--entropy_high_rate",
-        type=float,
-        default=1e-2,
-        help="Entropy coefficient is sampled from log uniform distribution(low, high).",
-    )
-    parser.add_argument(
-        "--pc_low_rate",
-        type=float,
-        default=0.01,
-        help="""Pixel control lambda coefficient is sampled
-                from log uniform distribution(low, high).""",
-    )
-    parser.add_argument(
-        "--pc_high_rate",
-        type=float,
-        default=0.1,
-        help="""Pixel control lambda coefficient is sampled
-                from log uniform distribution(low, high).""",
-    )
-    parser.add_argument(
         "--timesteps", type=int, default=5000000, help="Number of training steps."
     )
     parser.add_argument(
@@ -75,7 +37,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--epoches",
         type=int,
-        default=8,
+        default=4,
         help="Number of updates once the experience memory is filled.",
     )
     parser.add_argument(
@@ -126,7 +88,7 @@ if __name__ == "__main__":
         args.sequence_length,
         args.epoches,
         args.timesteps,
-        1e-5,
+        3e-4,
         device,
         args.ppo,
     )

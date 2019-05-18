@@ -41,39 +41,45 @@ class BaseNetwork(torch.nn.Module):
         self.conv3 = _init_module_weights(
             torch.nn.Conv2d(
                 in_channels=second_layer_filters,
-                out_channels=first_layer_filters,
+                out_channels=second_layer_filters,
                 kernel_size=3,
                 stride=1,
             ),
             gain="leaky_relu",
         )
+        self.bn1 = torch.nn.BatchNorm2d(first_layer_filters)
+        self.bn2 = torch.nn.BatchNorm2d(second_layer_filters)
+        self.bn3 = torch.nn.BatchNorm1d(out_features)
 
         self.mean = obs_mean
         self.std = obs_std
 
         self.fully_connected = _init_module_weights(
-            torch.nn.Linear(32 * 7 * 7, out_features), gain="leaky_relu"
+            torch.nn.Linear(64 * 7 * 7, out_features), gain="leaky_relu"
         )
         self.lrelu = torch.nn.LeakyReLU(inplace=True)
 
     def forward(self, inputs):
         new_input = inputs.type(torch.float32)
         new_input = (new_input - self.mean) / (self.std + 1e-6)
-        # new_input = new_input / 255
 
         conv1_out = self.conv1(new_input)
         self.lrelu(conv1_out)
+        conv1_out = self.bn1(conv1_out)
 
         conv2_out = self.conv2(conv1_out)
         self.lrelu(conv2_out)
+        conv2_out = self.bn2(conv2_out)
 
         conv3_out = self.conv3(conv2_out)
         self.lrelu(conv3_out)
+        conv3_out = self.bn2(conv3_out)
 
         fc_input = conv3_out.view(conv3_out.size(0), -1)
 
         linear_out = self.fully_connected(fc_input)
         self.lrelu(linear_out)
+        # linear_out = self.bn3(linear_out)
 
         return linear_out
 
@@ -150,33 +156,26 @@ class FeatureExtractor(torch.nn.Module):
     def __init__(self, num_of_filters, output_size, obs_mean, obs_std):
         super(FeatureExtractor, self).__init__()
 
-        self.conv_f = torch.nn.Conv2d(
-            3, num_of_filters, kernel_size=3, stride=2, padding=1
-        )
+        self.conv_f = torch.nn.Conv2d(3, num_of_filters, kernel_size=8, stride=4)
         self.conv_s = torch.nn.Conv2d(
-            num_of_filters, num_of_filters, kernel_size=3, stride=2, padding=1
+            num_of_filters, num_of_filters * 2, kernel_size=4, stride=2
         )
         self.conv_t = torch.nn.Conv2d(
-            num_of_filters, num_of_filters * 2, kernel_size=3, stride=2, padding=1
+            num_of_filters * 2, num_of_filters * 2, kernel_size=3, stride=1
         )
-        self.conv_final = torch.nn.Conv2d(
-            num_of_filters * 2, num_of_filters * 2, kernel_size=3, stride=2, padding=1
-        )
-        self.linear = torch.nn.Linear(in_features=64 * 6 * 6, out_features=288)
+        self.linear = torch.nn.Linear(in_features=64 * 7 * 7, out_features=288)
 
         self.lrelu = torch.nn.LeakyReLU(inplace=True)
 
         self.bn1 = torch.nn.BatchNorm2d(num_of_filters)
-        self.bn2 = torch.nn.BatchNorm2d(num_of_filters)
+        self.bn2 = torch.nn.BatchNorm2d(num_of_filters * 2)
         self.bn3 = torch.nn.BatchNorm2d(num_of_filters * 2)
-        self.bn4 = torch.nn.BatchNorm2d(num_of_filters * 2)
         self.mean = obs_mean
         self.std = obs_std
 
         torch.nn.init.xavier_uniform_(self.conv_f.weight)
         torch.nn.init.xavier_uniform_(self.conv_s.weight)
         torch.nn.init.xavier_uniform_(self.conv_t.weight)
-        torch.nn.init.xavier_uniform_(self.conv_final.weight)
         torch.nn.init.xavier_uniform_(self.linear.weight)
 
     def forward(self, state):
@@ -184,21 +183,20 @@ class FeatureExtractor(torch.nn.Module):
         state = (state - self.mean) / (self.std + 1e-6)
 
         f_output = self.conv_f(state)
-        f_output = self.bn1(f_output)
         self.lrelu(f_output)
-        s_output = self.conv_s(f_output)
-        s_output = self.bn2(s_output)
-        self.lrelu(s_output)
-        t_output = self.conv_t(s_output)
-        t_output = self.bn3(t_output)
-        self.lrelu(t_output)
-        conv_final = self.conv_final(t_output)
-        conv_final = self.bn4(conv_final)
-        self.lrelu(conv_final)
+        f_output = self.bn1(f_output)
 
-        flatten = conv_final.view(conv_final.size(0), -1)
+        s_output = self.conv_s(f_output)
+        self.lrelu(s_output)
+        s_output = self.bn2(s_output)
+
+        t_output = self.conv_t(s_output)
+        self.lrelu(t_output)
+        t_output = self.bn3(t_output)
+
+        flatten = t_output.view(t_output.size(0), -1)
+        self.lrelu(flatten)
         features = self.linear(flatten)
-        self.lrelu(features)
 
         return features
 
@@ -258,31 +256,3 @@ class InverseModel(torch.nn.Module):
         pred_actions = self.softmax(s_output)
 
         return pred_actions
-
-
-class PixelControlNetwork(torch.nn.Module):
-    def __init__(self, action_size):
-        super(PixelControlNetwork, self).__init__()
-
-        self.fully_connected = torch.nn.Linear(in_features=256, out_features=9 * 9 * 32)
-        self.deconv_value = torch.nn.ConvTranspose2d(
-            in_channels=32, out_channels=1, kernel_size=(4, 4), stride=2
-        )
-        self.deconv_adv = torch.nn.ConvTranspose2d(
-            in_channels=32, out_channels=action_size, kernel_size=(4, 4), stride=2
-        )
-        self.relu = torch.nn.ReLU(inplace=True)
-
-    def forward(self, inputs):
-        linear_out = self.fully_connected(inputs)
-        linear_out = linear_out.view([-1, 32, 9, 9])
-
-        self.relu(linear_out)
-
-        value = self.deconv_value(linear_out)
-        advantage = self.deconv_adv(linear_out)
-
-        advantage_mean = torch.mean(advantage, dim=1, keepdim=True)
-        q_aux = value + advantage - advantage_mean
-        q_aux_max = torch.max(q_aux, dim=1, keepdim=False)[0]
-        return q_aux, q_aux_max

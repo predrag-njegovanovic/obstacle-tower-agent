@@ -19,10 +19,6 @@ def prepare_state(state):
     return reshaped_frame
 
 
-def log_uniform(low, high, size=None):
-    return np.exp(np.random.uniform(np.log(low), np.log(high), size))
-
-
 def create_action_space():
     actions = itertools.product(
         definitions.ACTION_MOVE,
@@ -58,3 +54,11 @@ def mean_std_obs(num_steps):
     env.close()
     stacked = np.stack(observations)
     return np.mean(stacked), np.std(stacked)
+
+
+def scale_reward(reward, min_allowed, max_allowed):
+    min_rew = 1e-5
+    max_rew = 1
+    return (max_allowed - min_allowed) * (reward - min_allowed) / (
+        max_rew - min_rew
+    ) + min_allowed
