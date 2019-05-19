@@ -1,7 +1,6 @@
 import torch
 
 from agent import base_networks
-from agent.utils import scale_reward
 
 
 class TowerAgent(torch.nn.Module):
@@ -22,8 +21,8 @@ class TowerAgent(torch.nn.Module):
         value_coeff=0.5,
         pc_lambda=0.01,
         ppo_epsilon=0.2,
-        beta=0.7,
-        isc_lambda=0.7,
+        beta=0.8,
+        isc_lambda=0.8,
     ):
 
         super(TowerAgent, self).__init__()
@@ -65,15 +64,13 @@ class TowerAgent(torch.nn.Module):
         self.forward_model.cuda()
         self.inverse_model.cuda()
 
-    def act(self, state, reward_and_last_action, last_hidden_state=None):
+    def act(self, state, last_hidden_state=None):
         """
         Run batch of states (3-channel images) through network to get
         estimated value and policy logs.
         """
         conv_features = self.conv_network(state)
-        features, hidden_state = self.lstm_network(
-            conv_features, reward_and_last_action, last_hidden_state
-        )
+        features, hidden_state = self.lstm_network(conv_features, last_hidden_state)
 
         value = self.value(features)
         policy = self.policy(features)
@@ -150,6 +147,13 @@ class TowerAgent(torch.nn.Module):
         inv_loss = self.cross_entropy(pred_acts, torch.argmax(action_indices, dim=1))
         return inv_loss
 
+    def value_loss(self, returns, values):
+        return 0.5 * self.mse_loss(values, returns)
+
+    def entropy(self, policy):
+        dist = torch.distributions.Categorical
+        return dist(probs=policy).entropy().mean()
+
     def policy_loss(self, policy, adventage, action_indices):
         policy_logs = torch.log(torch.clamp(policy, 1e-20, 1.0))
 
@@ -171,10 +175,3 @@ class TowerAgent(torch.nn.Module):
 
         policy_loss = -torch.min(ratio_term, clamp_term).mean()
         return policy_loss
-
-    def value_loss(self, returns, values):
-        return 0.5 * self.mse_loss(values, returns)
-
-    def entropy(self, policy):
-        dist = torch.distributions.Categorical
-        return dist(probs=policy).entropy().mean()

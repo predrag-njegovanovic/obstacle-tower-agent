@@ -20,25 +20,22 @@ if __name__ == "__main__":
         help="Number of parallel environment to train on.",
     )
     parser.add_argument(
-        "--observation_size", type=int, default=128, help="Size of experience memory."
+        "--experience_memory", type=int, default=128, help="Size of experience memory."
     )
     parser.add_argument(
         "--timesteps", type=int, default=5000000, help="Number of training steps."
     )
     parser.add_argument(
-        "--batch_size", type=int, default=128, help="Number of steps per epoch"
-    )
-    parser.add_argument(
-        "--sequence-length",
-        type=int,
-        default=20,
-        help="Number of samples sampled from experience memory",
+        "--batch_size", type=int, default=128, help="Number of steps per update"
     )
     parser.add_argument(
         "--epoches",
         type=int,
         default=4,
         help="Number of updates once the experience memory is filled.",
+    )
+    parser.add_argument(
+        "--learning_rate", type=float, default=4e-4, help="Learning rate."
     )
     parser.add_argument(
         "--ppo", type=bool, default=False, help="Use PPO algorithm for training."
@@ -75,7 +72,9 @@ if __name__ == "__main__":
     else:
         device = torch.device("cpu")
 
-    memory = ExperienceMemory(args.num_envs, args.observation_size, action_size, device)
+    memory = ExperienceMemory(
+        args.num_envs, args.experience_memory, action_size, device
+    )
 
     trainer = Trainer(
         env,
@@ -83,12 +82,11 @@ if __name__ == "__main__":
         agent,
         actions,
         args.num_envs,
-        args.observation_size,
+        args.experience_memory,
         args.batch_size,
-        args.sequence_length,
         args.epoches,
         args.timesteps,
-        3e-4,
+        args.learning_rate,
         device,
         args.ppo,
     )

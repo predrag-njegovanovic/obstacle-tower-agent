@@ -14,7 +14,6 @@ def greedy_policy(action_space, policy):
     print(policy)
     probs = torch.distributions.Categorical
     index = probs(probs=policy).sample()
-    # index = torch.argmax(policy)
     return action_space[index], index
 
 
@@ -45,9 +44,8 @@ if __name__ == "__main__":
     model_name = os.path.join(definitions.MODEL_PATH, args.model_name)
     obs_mean, obs_std = mean_std_obs(10000)
 
-    env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True, worker_id=10)
+    env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True)
     env.seed(args.seed)
-    env.floor(1)
     env.reset()
 
     config = definitions.network_params
@@ -79,13 +77,9 @@ if __name__ == "__main__":
     frame, key, time = env.reset()
     state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
 
-    action_encoding = torch.zeros((action_size, 1)).to(device)
-    reward_action = torch.zeros((1, action_size + 1)).to(device)
-
     # Bootstrap initial state and reward_action vector
-    value, policy, rhs = agent.act(state, reward_action)
+    value, policy, rhs = agent.act(state)
     action, action_index = greedy_policy(actions, policy)
-    action_encoding[action_index] = 1
     while True:
         for _ in range(6):
             obs, reward, done, _ = env.step(action)
@@ -95,12 +89,5 @@ if __name__ == "__main__":
         if done:
             break
 
-        reward_tensor = torch.Tensor([reward]).unsqueeze(1).to(device)
-        temporary_tensor = torch.cat((action_encoding, reward_tensor))
-        reward_action.copy_(temporary_tensor.transpose_(0, 1))
-
-        value, policy, rhs = agent.act(state, reward_action, rhs)
+        value, policy, rhs = agent.act(state, rhs)
         action, action_index = greedy_policy(actions, policy)
-
-        action_encoding = torch.zeros((action_size, 1)).cuda()
-        action_encoding[action_index] = 1

@@ -79,7 +79,6 @@ class BaseNetwork(torch.nn.Module):
 
         linear_out = self.fully_connected(fc_input)
         self.lrelu(linear_out)
-        # linear_out = self.bn3(linear_out)
 
         return linear_out
 
@@ -97,15 +96,12 @@ class GRUNetwork(torch.nn.Module):
             )
         )
 
-    def forward(self, inputs, reward_and_last_action, last_hidden_state):
-        features = torch.cat((inputs, reward_and_last_action), dim=1)
-        # 8 x 311
-
+    def forward(self, inputs, last_hidden_state):
         if inputs.size(0) > 8:
             batch_seq = inputs.unsqueeze(0)
         else:
             batch_seq = inputs.unsqueeze(1)
-        # 8 x 1 x 311 (batch, seq, in)
+        # (batch, seq, in)
         output, hidden_state = self.gru(batch_seq, last_hidden_state)
 
         if inputs.size(0) > 8:

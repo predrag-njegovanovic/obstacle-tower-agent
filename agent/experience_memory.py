@@ -87,17 +87,7 @@ class ExperienceMemory:
 
         return states, reward_actions, old_time
 
-    def on_policy_sampling(self, running_reward_std):
-        batched_value = []
-        batched_states = []
-        batched_reward = []
-        batched_action_indices = []
-        batched_first_rhs = []
-        batched_policy = []
-        batched_dones = []
-        batched_state_f = []
-        batched_new_state_f = []
-
+    def a2c_policy_sampling(self, running_reward_std):
         env = random.randint(0, self.num_envs - 1)
         last_element = self.memory_pointer - 1
 
@@ -111,16 +101,6 @@ class ExperienceMemory:
         states_f = self.state_f[:last_element, env, :]
         new_states_f = self.new_state_f[:last_element, env, :]
 
-        batched_value.append(values)
-        batched_states.append(states)
-        batched_reward.append(rewards)
-        batched_action_indices.append(action_indices)
-        batched_first_rhs.append(first_rhs)
-        batched_policy.append(policies)
-        batched_dones.append(dones)
-        batched_state_f.append(states_f)
-        batched_new_state_f.append(new_states_f)
-
         return (
             states,
             action_indices,
@@ -131,19 +111,55 @@ class ExperienceMemory:
             dones,
             states_f,
             new_states_f,
-            # torch.cat(batched_states, dim=0),
-            # torch.cat(batched_action_indices, dim=0),
-            # torch.cat(batched_policy, dim=0),
-            # batched_reward,
-            # batched_value,
-            # torch.cat(batched_first_rhs, dim=0).view(1, -1, 512),
-            # # torch.cat(batched_second_rhs, dim=0).view(1, -1, 256),
-            # batched_dones,
-            # torch.cat(batched_state_f, dim=0),
-            # torch.cat(batched_new_state_f, dim=0),
         )
 
-    # try gae later
+    def ppo_policy_sampling(self, minibatch_size, running_reward_std):
+        batched_value = []
+        batched_states = []
+        batched_reward = []
+        batched_action_indices = []
+        batched_first_rhs = []
+        batched_policy = []
+        batched_dones = []
+        batched_state_f = []
+        batched_new_state_f = []
+
+        for _ in range(minibatch_size):
+            env = random.randint(0, self.num_envs - 1)
+            last_element = self.memory_pointer - 1
+
+            states = self.frame[:last_element, env, :, :, :]
+            rewards = self.reward[:last_element, env] / running_reward_std[env]
+            values = self.value[:last_element, env]
+            action_indices = self.action_indices[:last_element, env, :]
+            first_rhs = self.first_lstm_rhs[:last_element, :, env, :]
+            policies = self.policy_values[:last_element, env, :]
+            dones = self.done_state[:last_element, env]
+            states_f = self.state_f[:last_element, env, :]
+            new_states_f = self.new_state_f[:last_element, env, :]
+
+            batched_value.append(values)
+            batched_states.append(states)
+            batched_reward.append(rewards)
+            batched_action_indices.append(action_indices)
+            batched_first_rhs.append(first_rhs)
+            batched_policy.append(policies)
+            batched_dones.append(dones)
+            batched_state_f.append(states_f)
+            batched_new_state_f.append(new_states_f)
+
+        return (
+            torch.cat(batched_states, dim=0),
+            torch.cat(batched_action_indices, dim=0),
+            torch.cat(batched_policy, dim=0),
+            batched_reward,
+            batched_value,
+            torch.cat(batched_first_rhs, dim=0).view(1, -1, 512),
+            batched_dones,
+            torch.cat(batched_state_f, dim=0),
+            torch.cat(batched_new_state_f, dim=0),
+        )
+
     def compute_returns(self, rewards, values, dones, discount=0.99):
         num_steps = rewards.shape[0]
         masks = 1 - dones
@@ -158,22 +174,3 @@ class ExperienceMemory:
             )
 
         return returns
-
-    def calculate_reward(self, reward, new_time, old_time, key):
-        """
-        Scale time difference between two steps to [0, 1] range and add to reward.
-        """
-        for index, _ in enumerate(reward):
-            time_difference = old_time[index] - new_time[index]
-            reward[index] = reward[index] - (time_difference / 1000)
-
-        return reward
-
-    def concatenate_reward_and_action(self, reward, action_encoding):
-        """
-        Concatenate one-hot action representation from last state
-        and current state reward.
-        """
-        return torch.cat((action_encoding.cpu(), reward.unsqueeze(1)), dim=1).to(
-            self.device
-        )

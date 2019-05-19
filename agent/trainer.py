@@ -29,7 +29,6 @@ class Trainer:
         num_envs,
         experience_history_size,
         batch_size,
-        sequence_length,
         num_of_epoches,
         total_timesteps,
         learning_rate,
@@ -44,7 +43,6 @@ class Trainer:
         self.num_envs = num_envs
         self.experience_history_size = experience_history_size
         self.batch_size = batch_size
-        self.sequence_length = sequence_length
         self.num_of_epoches = num_of_epoches
         self.total_timesteps = total_timesteps
         self.distribution = torch.distributions.Categorical
@@ -74,8 +72,10 @@ class Trainer:
         )
 
         for timestep in range(num_of_updates):
-            episode_reward = self._fill_experience(action_size)
-            pi_loss, val_loss, ent, fwd, inv = self._update_observations(action_size)
+            episode_reward = self.collect_experience(action_size)
+            policy_loss, value_loss, entropy_loss, forward_loss, inverse_loss = self.agent_update(
+                action_size
+            )
             self.writer.add_scalars(
                 "tower/rewards",
                 {
@@ -85,11 +85,11 @@ class Trainer:
                 },
                 timestep,
             )
-            self.writer.add_scalar("tower/policy_loss", pi_loss.mean(), timestep)
-            self.writer.add_scalar("tower/value_loss", val_loss.mean(), timestep)
-            self.writer.add_scalar("tower/entropy_loss", ent.mean(), timestep)
-            self.writer.add_scalar("tower/forward_loss", fwd.mean(), timestep)
-            self.writer.add_scalar("tower/inverse_loss", inv.mean(), timestep)
+            self.writer.add_scalar("tower/policy_loss", policy_loss.mean(), timestep)
+            self.writer.add_scalar("tower/value_loss", value_loss.mean(), timestep)
+            self.writer.add_scalar("tower/entropy_loss", entropy_loss.mean(), timestep)
+            self.writer.add_scalar("tower/forward_loss", forward_loss.mean(), timestep)
+            self.writer.add_scalar("tower/inverse_loss", inverse_loss.mean(), timestep)
             self.writer.add_scalar(
                 "tower/lr", np.array(lr_scheduler.get_lr()), timestep
             )
@@ -105,38 +105,30 @@ class Trainer:
 
         self.writer.close()
 
-    def _fill_experience(self, action_size):
+    def collect_experience(self, action_size):
         reset = True
-
         counter = 0
         episode_reward = torch.zeros(self.num_envs)
+
         for ep_step in tqdm(range(self.batch_size)):
             with torch.no_grad():
                 if reset:
-                    old_state, key, old_time = self.env.reset()
-                    last_rhs = None
-                    reward_action = torch.zeros((self.num_envs, action_size)).to(
-                        self.device
-                    )
-                    value, policy_acts, rhs = self.agent_network.act(
-                        old_state, reward_action, last_rhs
-                    )
+                    state, key, time = self.env.reset()
+                    last_rhs = torch.zeros((1, self.num_envs, 512)).to(self.device)
+                    value, policy, rhs = self.agent_network.act(state, last_rhs)
                     reset = False
                 else:
                     last_rhs = self.experience.last_hidden_state
-                    old_state, reward_action, old_time = self.experience.last_frames()
-                    value, policy_acts, rhs = self.agent_network.act(
-                        old_state, reward_action.cuda(), last_rhs
-                    )
+                    state, reward_action, time = self.experience.last_frames()
+                    value, policy, rhs = self.agent_network.act(state, last_rhs)
 
-                action = self.sample_action(policy_acts)
+                action = self.sample_action(policy)
                 new_actions = [self.action_space[act] for act in action]
 
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
 
                 if len(torch.nonzero(done)) > 0:
-                    # print("Mean rew per episode: {}".format(episode_reward / ep_step))
                     break
 
                 if len(torch.nonzero(reward)) > 0:
@@ -151,7 +143,7 @@ class Trainer:
                     action_encoding[i, action[i]] = 1
 
                 reward_i, state_features, new_state_features = self.agent_network.icm_act(
-                    old_state, new_state, action_encoding
+                    state, new_state, action_encoding
                 )
 
                 reward_e_i = reward + reward_i.cpu()
@@ -160,14 +152,14 @@ class Trainer:
 
                 self.experience.add_experience(
                     new_state,
-                    old_state,
+                    state,
                     reward_e_i,
                     new_time,
                     action_encoding,
                     done,
                     value,
                     rhs,
-                    policy_acts,
+                    policy,
                     state_features,
                     new_state_features,
                 )
@@ -176,7 +168,7 @@ class Trainer:
         print("Hits in episode run: {}".format(counter))
         return episode_reward
 
-    def _update_observations(self, action_size):
+    def agent_update(self, action_size):
         num_updates = 3
 
         v_loss_mean = torch.zeros(num_updates)
@@ -185,47 +177,48 @@ class Trainer:
         fwd_loss_mean = torch.zeros(num_updates)
         inv_loss_mean = torch.zeros(num_updates)
 
-        running_reward = self.reward_updater.running_reward[
-            : self.experience.memory_pointer - 1, :
-        ]
+        memory_pointer = self.experience.memory_pointer
+        running_reward = self.reward_updater.running_reward[: memory_pointer - 1, :]
         running_reward_std = torch.std(running_reward, dim=0)
+
         for update in range(num_updates):
             value_loss = torch.zeros(self.num_of_epoches)
             policy_loss = torch.zeros(self.num_of_epoches)
             entropy_loss = torch.zeros(self.num_of_epoches)
-            fwd_loss = torch.zeros(self.num_of_epoches)
-            inv_loss = torch.zeros(self.num_of_epoches)
+            forward_loss = torch.zeros(self.num_of_epoches)
+            inverse_loss = torch.zeros(self.num_of_epoches)
 
-            for i in tqdm(range(self.num_of_epoches)):
+            for epoch in tqdm(range(self.num_of_epoches)):
                 exp_batches = self.experience.on_policy_sampling(running_reward_std)
 
-                states, action_indices, policy, rewards, values, rhs, dones, states_f, new_states_f = (
+                states, action_indices, policies, rewards, values, rhs, dones, state_features, new_state_features = (
                     exp_batches
                 )
 
-                agent_loss, pi_loss, v_loss, ent, fwd, inv = self.base_loss(
-                    action_size,
-                    states,
-                    action_indices,
-                    rewards,
-                    values,
-                    policy,
-                    rhs,
-                    dones,
-                    states_f,
-                    new_states_f,
-                )
+                if self.ppo:
+                    pass
+                else:
+                    agent_loss, pi_loss, v_loss, ent, fwd, inv = self.a2c_loss(
+                        action_size,
+                        states,
+                        action_indices,
+                        rewards,
+                        values,
+                        rhs,
+                        dones,
+                        state_features,
+                        new_state_features,
+                    )
 
                 self.optim.zero_grad()
-                loss = agent_loss
-                loss = loss / self.num_of_epoches
+                loss = agent_loss / self.num_of_epoches
                 loss.backward()
 
-                value_loss[i].copy_(v_loss)
-                policy_loss[i].copy_(pi_loss)
-                entropy_loss[i].copy_(ent)
-                fwd_loss[i].copy_(fwd)
-                inv_loss[i].copy_(inv)
+                value_loss[epoch].copy_(v_loss)
+                policy_loss[epoch].copy_(pi_loss)
+                entropy_loss[epoch].copy_(ent)
+                forward_loss[epoch].copy_(fwd)
+                inverse_loss[epoch].copy_(inv)
 
             torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 40)
             self.optim.step()
@@ -233,13 +226,56 @@ class Trainer:
             v_loss_mean[update].copy_(value_loss.mean())
             pi_loss_mean[update].copy_(policy_loss.mean())
             ent_loss_mean[update].copy_(entropy_loss.mean())
-            fwd_loss_mean[update].copy_(fwd_loss.mean())
-            inv_loss_mean[update].copy_(inv_loss.mean())
+            fwd_loss_mean[update].copy_(forward_loss.mean())
+            inv_loss_mean[update].copy_(inverse_loss.mean())
 
         return (pi_loss_mean, v_loss_mean, ent_loss_mean, fwd_loss_mean, inv_loss_mean)
 
-    def base_loss(
+    def a2c_loss(
         self,
+        action_size,
+        states,
+        action_indices,
+        rewards,
+        values,
+        base_rhs,
+        dones,
+        state_features,
+        new_state_features,
+    ):
+
+        returns = self.experience.compute_returns(rewards, values, dones)
+        returns = torch.Tensor(returns).to(self.device)
+
+        advantage = returns - values
+        advantage = (advantage - torch.mean(advantage)) / (torch.std(advantage) + 1e-6)
+
+        rhs = torch.zeros((1, 1, 512)).to(self.device)
+        new_value, policy_acts, _ = self.agent_network.act(states, rhs)
+
+        predicted_states = self.agent_network.forward_act(
+            state_features, action_indices
+        )
+        predicted_acts = self.agent_network.inverse_act(
+            state_features, new_state_features
+        )
+
+        agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss = self.agent_network.a2c_loss(
+            policy_acts,
+            advantage,
+            returns,
+            new_value,
+            action_indices,
+            new_state_features,
+            predicted_states,
+            predicted_acts,
+        )
+
+        return agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
+
+    def ppo_loss(
+        self,
+        minibatch_size,
         action_size,
         states,
         action_indices,
@@ -251,23 +287,24 @@ class Trainer:
         state_features,
         new_state_features,
     ):
-        # batch_returns = []
-        # batch_advantages = []
+        batch_returns = []
+        batch_advantages = []
 
-        # for env in range(1):
-        returns = self.experience.compute_returns(rewards, values, dones)
-        returns = torch.Tensor(returns).to(self.device)
+        for env in range(minibatch_size):
+            returns = self.experience.compute_returns(rewards, values, dones)
+            returns = torch.Tensor(returns).to(self.device)
 
-        advantage = returns - values
+            advantage = returns - values
 
-        # batch_advantages.append(adv)
-        # batch_returns.append(returns)
+            batch_advantages.append(advantage)
+            batch_returns.append(returns)
 
-        # advantage = torch.cat(batch_advantages, dim=0)
+        advantage = torch.cat(batch_advantages, dim=0)
         advantage = (advantage - torch.mean(advantage)) / (torch.std(advantage) + 1e-6)
 
-        new_value, policy_acts, _ = self.agent_network.act(states, action_indices, None)
-        # returns = torch.cat(batch_returns, dim=0).to(self.device)
+        rhs = torch.zeros((1, 1, 512)).to(self.device)
+        new_value, policy_acts, _ = self.agent_network.act(states, rhs)
+        returns = torch.cat(batch_returns, dim=0).to(self.device)
 
         batch_predicted_states = self.agent_network.forward_act(
             state_features, action_indices
@@ -276,20 +313,15 @@ class Trainer:
             state_features, new_state_features
         )
 
-        if self.ppo:
-            agent_loss, pi_loss, v_loss, entropy = self.agent_network.ppo_loss(
-                old_policy, policy_acts, advantage, returns, new_value, action_indices
-            )
-        else:
-            agent_loss, pi_loss, v_loss, entropy, fwd_loss, inv_loss = self.agent_network.a2c_loss(
-                policy_acts,
-                advantage,
-                returns,
-                new_value,
-                action_indices,
-                new_state_features,
-                batch_predicted_states,
-                batch_predicted_acts,
-            )
-
-        return agent_loss, pi_loss, v_loss, entropy, fwd_loss, inv_loss
+        agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss = self.agent_network.ppo_loss(
+            old_policy,
+            policy_acts,
+            advantage,
+            returns,
+            new_value,
+            action_indices,
+            new_state_features,
+            batch_predicted_states,
+            batch_predicted_acts,
+        )
+        return agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss

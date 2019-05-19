@@ -18,7 +18,6 @@ def start_environment(connection, worker_id, env_path, retro, realtime_mode):
         if command == "step":
             cumulative_reward = 0
 
-            # frame skipping
             for i in range(6):
                 observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time = observation
@@ -74,7 +73,6 @@ class ParallelEnvironment:
         for action, parent in zip(actions, self.parent_connections):
             parent.send(("step", action))
 
-        # zip(*[(state, key, time, reward, done)...])
         state, key, time, reward, done = zip(
             *[parent.recv() for parent in self.parent_connections]
         )
