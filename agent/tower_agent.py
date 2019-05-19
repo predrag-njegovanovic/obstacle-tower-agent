@@ -19,7 +19,6 @@ class TowerAgent(torch.nn.Module):
         obs_std,
         entropy_coeff=0.001,
         value_coeff=0.5,
-        pc_lambda=0.01,
         ppo_epsilon=0.2,
         beta=0.8,
         isc_lambda=0.8,
@@ -98,16 +97,37 @@ class TowerAgent(torch.nn.Module):
         )
         return batch_pred_acts
 
-    def ppo_loss(self, old_policy, policy, advantage, returns, values, action_indices):
+    def ppo_loss(
+        self,
+        old_policy,
+        new_policy,
+        advantage,
+        returns,
+        values,
+        action_indices,
+        new_state_features,
+        new_state_predictions,
+        action_predictions,
+    ):
         policy_loss = self.ppo_policy_loss(
-            old_policy, policy, advantage, action_indices
+            old_policy, new_policy, advantage, action_indices
         )
         value_loss = self.value_loss(returns, values)
-        entropy = self.entropy(policy)
+        entropy = self.entropy(new_policy)
 
-        loss = policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
+        ppo_loss = (
+            policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
+        )
+        forward_loss = self.forward_loss(new_state_features, new_state_predictions)
+        inverse_loss = self.inverse_loss(action_predictions, action_indices.detach())
 
-        return loss, policy_loss, value_loss, entropy
+        loss = (
+            self.isc_lambda * ppo_loss
+            + (1 - self.beta) * inverse_loss
+            + self.beta * forward_loss
+        )
+
+        return loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
 
     def a2c_loss(
         self,
@@ -117,8 +137,8 @@ class TowerAgent(torch.nn.Module):
         values,
         action_indices,
         new_state_features,
-        new_state_preds,
-        pred_acts,
+        new_state_predictions,
+        action_predictions,
     ):
 
         policy_loss = self.policy_loss(policy, advantage, action_indices)
@@ -128,16 +148,16 @@ class TowerAgent(torch.nn.Module):
         a2c_loss = (
             policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
         )
-        fwd_loss = self.forward_loss(new_state_features, new_state_preds)
-        inv_loss = self.inverse_loss(pred_acts, action_indices.detach())
+        forward_loss = self.forward_loss(new_state_features, new_state_predictions)
+        inverse_loss = self.inverse_loss(action_predictions, action_indices.detach())
 
         loss = (
             self.isc_lambda * a2c_loss
-            + (1 - self.beta) * inv_loss
-            + self.beta * fwd_loss
+            + (1 - self.beta) * inverse_loss
+            + self.beta * forward_loss
         )
 
-        return loss, policy_loss, value_loss, entropy, fwd_loss, inv_loss
+        return loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
 
     def forward_loss(self, new_state_features, new_state_pred):
         fwd_loss = 0.5 * self.mse_loss(new_state_pred, new_state_features)
@@ -161,14 +181,14 @@ class TowerAgent(torch.nn.Module):
         policy_loss = -torch.mean(adventage * pi_logs)
         return policy_loss
 
-    def ppo_policy_loss(self, old_policy, policy, advantage, action_indices):
-        policy = torch.log(torch.clamp(policy, 1e-20, 1.0))
+    def ppo_policy_loss(self, old_policy, new_policy, advantage, action_indices):
+        new_policy = torch.log(torch.clamp(new_policy, 1e-20, 1.0))
         old_policy = torch.log(torch.clamp(old_policy, 1e-20, 1.0))
 
-        pi_logs = torch.sum(torch.mul(policy, action_indices), 1)
-        old_pi_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
+        policy_logs = torch.sum(torch.mul(new_policy, action_indices), 1)
+        old_policy_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
 
-        ratio = torch.exp(pi_logs - old_pi_logs)
+        ratio = torch.exp(policy_logs - old_policy_logs)
         ratio_term = ratio * advantage
         clamp = torch.clamp(ratio, 1 - self.ppo_epsilon, 1 + self.ppo_epsilon)
         clamp_term = clamp * advantage

@@ -283,10 +283,13 @@ class Trainer:
         batch_advantages = []
 
         for env in range(minibatch_size):
-            returns = self.experience.compute_returns(rewards, values, dones)
+            returns = self.experience.compute_returns(
+                rewards[env], values[env], dones[env]
+            )
+
             returns = torch.Tensor(returns).to(self.device)
 
-            advantage = returns - values
+            advantage = returns - values[env]
 
             batch_advantages.append(advantage)
             batch_returns.append(returns)
