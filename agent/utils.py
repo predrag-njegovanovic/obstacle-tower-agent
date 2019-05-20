@@ -37,8 +37,6 @@ def device():
 def mean_std_obs(num_steps):
     env_path = definitions.OBSTACLE_TOWER_PATH
     env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=False, worker_id=20)
-    env.seed(0)
-    env.floor(1)
     env.reset()
 
     observations = []
