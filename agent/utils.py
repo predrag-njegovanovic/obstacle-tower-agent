@@ -34,16 +34,17 @@ def device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def mean_std_obs(num_steps):
+def observation_mean_and_std(num_steps, config):
     env_path = definitions.OBSTACLE_TOWER_PATH
-    env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=False, worker_id=20)
+    env = ObstacleTowerEnv(env_path, config=config, retro=False,
+                           realtime_mode=False, worker_id=20)
     env.reset()
 
     observations = []
     for _ in tqdm(range(num_steps)):
         act = env.action_space.sample()
         obs, _, done, _ = env.step(act)
-        state, key, time = obs
+        state, key, time, _ = obs
         if done:
             env.reset()
 
@@ -52,11 +53,3 @@ def mean_std_obs(num_steps):
     env.close()
     stacked = np.stack(observations)
     return np.mean(stacked), np.std(stacked)
-
-
-def scale_reward(reward, min_allowed, max_allowed):
-    min_rew = 1e-5
-    max_rew = 1
-    return (max_allowed - min_allowed) * (reward - min_allowed) / (
-        max_rew - min_rew
-    ) + min_allowed

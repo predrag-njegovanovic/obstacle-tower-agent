@@ -8,7 +8,7 @@ from agent.trainer import Trainer
 from agent.tower_agent import TowerAgent
 from agent.experience_memory import ExperienceMemory
 from agent.parallel_environment import ParallelEnvironment
-from agent.utils import create_action_space, mean_std_obs
+from agent.utils import create_action_space, observation_mean_and_std
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Obstacle Tower Agent")
@@ -29,7 +29,7 @@ if __name__ == "__main__":
         "--batch_size", type=int, default=128, help="Number of steps per update"
     )
     parser.add_argument(
-        "--epoches",
+        "--epochs",
         type=int,
         default=4,
         help="Number of updates once the experience memory is filled.",
@@ -38,33 +38,49 @@ if __name__ == "__main__":
         "--learning_rate", type=float, default=4e-4, help="Learning rate."
     )
     parser.add_argument(
+        "--observation_stack_size",
+        type=int,
+        default=10000,
+        help="Number of collected observations before calculating mean and std."
+    )
+    parser.add_argument(
+        "--first_person", type=bool, default=False, help="Use first person camera.")
+    parser.add_argument(
         "--ppo", type=bool, default=False, help="Use PPO algorithm for training."
     )
     parser.add_argument("--use_cuda", type=bool, default=True, help="Use GPU training.")
 
     args = parser.parse_args()
-    config = definitions.network_params
+
+    if args.first_person:
+        config = {'agent-perspective': 0}
+    else:
+        config = {'agent-perspective': 1}
+
+    network_configuration = definitions.network_configuration
 
     actions = create_action_space()
     action_size = len(actions)
 
     env_path = definitions.OBSTACLE_TOWER_PATH
-    env = ParallelEnvironment(env_path, args.num_envs)
+    env = ParallelEnvironment(env_path, args.num_envs, config)
     env.start_parallel_execution()
-    obs_mean, obs_std = mean_std_obs(10000)
+    observation_mean, observation_std = observation_mean_and_std(
+        args.observation_stack_size, config)
 
     agent = TowerAgent(
         action_size,
-        config["first_filters"],
-        config["second_filters"],
-        config["convolution_output"],
-        config["hidden_state"],
-        config["feature_ext_filters"],
-        config["feature_output_size"],
-        config["forward_model_f_layer"],
-        config["inverse_model_f_layer"],
-        obs_mean,
-        obs_std,
+        args.num_envs,
+        network_configuration["first_filters"],
+        network_configuration["second_filters"],
+        network_configuration["convolution_output"],
+        network_configuration["hidden_state_size"],
+        network_configuration["feature_extraction_filters"],
+        network_configuration["feature_output_size"],
+        network_configuration["forward_model_layer"],
+        network_configuration["inverse_model_layer"],
+        observation_mean,
+        observation_std,
     )
     agent.to_cuda()
     if args.use_cuda:
@@ -84,7 +100,7 @@ if __name__ == "__main__":
         args.num_envs,
         args.experience_memory,
         args.batch_size,
-        args.epoches,
+        args.epochs,
         args.timesteps,
         args.learning_rate,
         device,

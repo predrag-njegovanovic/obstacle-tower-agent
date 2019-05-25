@@ -5,7 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
-from agent.definitions import MODEL_PATH
+from agent.definitions import MODEL_PATH, UPDATE_CYCLES
 
 
 class RewardForwardFilter:
@@ -29,7 +29,7 @@ class Trainer:
         num_envs,
         experience_size,
         batch_size,
-        num_of_epoches,
+        num_of_epochs,
         total_timesteps,
         learning_rate,
         device,
@@ -44,7 +44,7 @@ class Trainer:
         self.num_envs = num_envs
         self.experience_size = experience_size
         self.batch_size = batch_size
-        self.num_of_epoches = num_of_epoches
+        self.num_of_epochs = num_of_epochs
         self.total_timesteps = total_timesteps
         self.distribution = torch.distributions.Categorical
         self.lr = learning_rate
@@ -67,7 +67,7 @@ class Trainer:
     def train(self):
         num_of_updates = self.total_timesteps // (self.num_envs * self.batch_size)
 
-        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        learning_rate_scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optim, lr_lambda=lambda step: 1 - (step / float(num_of_updates))
         )
 
@@ -91,10 +91,10 @@ class Trainer:
             self.writer.add_scalar("tower/forward_loss", forward_loss.mean(), timestep)
             self.writer.add_scalar("tower/inverse_loss", inverse_loss.mean(), timestep)
             self.writer.add_scalar(
-                "tower/lr", np.array(lr_scheduler.get_lr()), timestep
+                "tower/lr", np.array(learning_rate_scheduler.get_lr()), timestep
             )
 
-            lr_scheduler.step()
+            learning_rate_scheduler.step()
             self.experience.empty()
             if timestep % 250 == 0:
                 name = "ppo" if self.ppo else "a2c"
@@ -128,11 +128,10 @@ class Trainer:
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
 
-                if len(torch.nonzero(done)) > 0:
+                if len(torch.nonzero(done)):
                     break
 
-                if len(torch.nonzero(reward)) > 0:
-                    print(reward)
+                if len(torch.nonzero(reward)):
                     counter += 1
 
                 action_encoding = torch.zeros((self.num_envs, self.action_size)).to(
@@ -167,28 +166,22 @@ class Trainer:
         return episode_reward
 
     def agent_update(self):
-        num_updates = 3
+        total_episode_steps = UPDATE_CYCLES * self.num_of_epochs
 
-        v_loss_mean = torch.zeros(num_updates)
-        pi_loss_mean = torch.zeros(num_updates)
-        ent_loss_mean = torch.zeros(num_updates)
-        fwd_loss_mean = torch.zeros(num_updates)
-        inv_loss_mean = torch.zeros(num_updates)
+        value_loss = torch.zeros(total_episode_steps)
+        policy_loss = torch.zeros(total_episode_steps)
+        entropy_loss = torch.zeros(total_episode_steps)
+        forward_loss = torch.zeros(total_episode_steps)
+        inverse_loss = torch.zeros(total_episode_steps)
 
         memory_pointer = self.experience.memory_pointer
         running_reward = self.reward_updater.running_reward[: memory_pointer - 1, :]
         running_reward_std = torch.std(running_reward, dim=0)
 
-        for update in range(num_updates):
-            value_loss = torch.zeros(self.num_of_epoches)
-            policy_loss = torch.zeros(self.num_of_epoches)
-            entropy_loss = torch.zeros(self.num_of_epoches)
-            forward_loss = torch.zeros(self.num_of_epoches)
-            inverse_loss = torch.zeros(self.num_of_epoches)
-
-            for epoch in tqdm(range(self.num_of_epoches)):
+        for update in range(UPDATE_CYCLES):
+            for epoch in tqdm(range(self.num_of_epochs)):
                 if self.ppo:
-                    minibatch_size = self.num_envs // self.num_of_epoches
+                    minibatch_size = self.num_envs // self.num_of_epochs
                     experience_batches = self.experience.ppo_policy_sampling(
                         minibatch_size, running_reward_std
                     )
@@ -198,34 +191,28 @@ class Trainer:
                     )
 
                 if self.ppo:
-                    agent_loss, pi_loss, v_loss, ent, fwd, inv = self.ppo_loss(
+                    agent_loss, policy, value, entropy, forward, inverse = self.ppo_loss(
                         minibatch_size, *experience_batches
                     )
                 else:
-                    agent_loss, pi_loss, v_loss, ent, fwd, inv = self.a2c_loss(
+                    agent_loss, policy, value, entropy, forward, inverse = self.a2c_loss(
                         *experience_batches
                     )
 
                 self.optim.zero_grad()
-                loss = agent_loss / self.num_of_epoches
+                loss = agent_loss / self.num_of_epochs
                 loss.backward()
 
-                value_loss[epoch].copy_(v_loss)
-                policy_loss[epoch].copy_(pi_loss)
-                entropy_loss[epoch].copy_(ent)
-                forward_loss[epoch].copy_(fwd)
-                inverse_loss[epoch].copy_(inv)
+                value_loss[update * self.num_of_epochs + epoch].copy_(value)
+                policy_loss[update * self.num_of_epochs + epoch].copy_(policy)
+                entropy_loss[update * self.num_of_epochs + epoch].copy_(entropy)
+                forward_loss[update * self.num_of_epochs + epoch].copy_(forward)
+                inverse_loss[update * self.num_of_epochs + epoch].copy_(inverse)
 
             torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 40)
             self.optim.step()
 
-            v_loss_mean[update].copy_(value_loss.mean())
-            pi_loss_mean[update].copy_(policy_loss.mean())
-            ent_loss_mean[update].copy_(entropy_loss.mean())
-            fwd_loss_mean[update].copy_(forward_loss.mean())
-            inv_loss_mean[update].copy_(inverse_loss.mean())
-
-        return (pi_loss_mean, v_loss_mean, ent_loss_mean, fwd_loss_mean, inv_loss_mean)
+        return (policy_loss, value_loss, entropy_loss, forward_loss, inverse_loss)
 
     def a2c_loss(
         self,

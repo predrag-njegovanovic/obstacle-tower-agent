@@ -7,6 +7,7 @@ class TowerAgent(torch.nn.Module):
     def __init__(
         self,
         action_size,
+        num_envs,
         first_layer_filters,
         second_layer_filters,
         conv_output_size,
@@ -34,7 +35,7 @@ class TowerAgent(torch.nn.Module):
             obs_std,
         )
         self.lstm_network = base_networks.GRUNetwork(
-            conv_output_size, hidden_state_size, action_size
+            conv_output_size, hidden_state_size, action_size, num_envs
         )
         self.feature_extractor = base_networks.FeatureExtractor(
             feature_ext_filters, feature_output_size, obs_mean, obs_std
@@ -115,19 +116,17 @@ class TowerAgent(torch.nn.Module):
         value_loss = self.value_loss(returns, values)
         entropy = self.entropy(new_policy)
 
-        ppo_loss = (
-            policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
-        )
+        loss = policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
         forward_loss = self.forward_loss(new_state_features, new_state_predictions)
         inverse_loss = self.inverse_loss(action_predictions, action_indices.detach())
 
-        loss = (
-            self.isc_lambda * ppo_loss
+        agent_loss = (
+            self.isc_lambda * loss
             + (1 - self.beta) * inverse_loss
             + self.beta * forward_loss
         )
 
-        return loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
+        return agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
 
     def a2c_loss(
         self,
@@ -145,27 +144,25 @@ class TowerAgent(torch.nn.Module):
         value_loss = self.value_loss(returns, values)
         entropy = self.entropy(policy)
 
-        a2c_loss = (
-            policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
-        )
+        loss = policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
         forward_loss = self.forward_loss(new_state_features, new_state_predictions)
         inverse_loss = self.inverse_loss(action_predictions, action_indices.detach())
 
-        loss = (
-            self.isc_lambda * a2c_loss
+        agent_loss = (
+            self.isc_lambda * loss
             + (1 - self.beta) * inverse_loss
             + self.beta * forward_loss
         )
 
-        return loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
+        return agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
 
     def forward_loss(self, new_state_features, new_state_pred):
-        fwd_loss = 0.5 * self.mse_loss(new_state_pred, new_state_features)
-        return fwd_loss
+        forward_loss = 0.5 * self.mse_loss(new_state_pred, new_state_features)
+        return forward_loss
 
     def inverse_loss(self, pred_acts, action_indices):
-        inv_loss = self.cross_entropy(pred_acts, torch.argmax(action_indices, dim=1))
-        return inv_loss
+        inverse_loss = self.cross_entropy(pred_acts, torch.argmax(action_indices, dim=1))
+        return inverse_loss
 
     def value_loss(self, returns, values):
         return 0.5 * self.mse_loss(values, returns)

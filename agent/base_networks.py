@@ -18,14 +18,15 @@ def _init_gru(gru_module):
 
 
 class BaseNetwork(torch.nn.Module):
-    def __init__(
-        self, first_layer_filters, second_layer_filters, out_features, obs_mean, obs_std
-    ):
+    def __init__(self, first_layer_filters, second_layer_filters, out_features, observation_mean, observation_std):
         super(BaseNetwork, self).__init__()
 
         self.conv1 = _init_module_weights(
             torch.nn.Conv2d(
-                in_channels=3, out_channels=first_layer_filters, kernel_size=8, stride=4
+                in_channels=3,
+                out_channels=first_layer_filters,
+                kernel_size=8,
+                stride=4
             ),
             gain="leaky_relu",
         )
@@ -49,10 +50,9 @@ class BaseNetwork(torch.nn.Module):
         )
         self.bn1 = torch.nn.BatchNorm2d(first_layer_filters)
         self.bn2 = torch.nn.BatchNorm2d(second_layer_filters)
-        self.bn3 = torch.nn.BatchNorm1d(out_features)
 
-        self.mean = obs_mean
-        self.std = obs_std
+        self.mean = observation_mean
+        self.std = observation_std
 
         self.fully_connected = _init_module_weights(
             torch.nn.Linear(64 * 7 * 7, out_features), gain="leaky_relu"
@@ -84,7 +84,7 @@ class BaseNetwork(torch.nn.Module):
 
 
 class GRUNetwork(torch.nn.Module):
-    def __init__(self, input_size, hidden_state_size, action_size):
+    def __init__(self, input_size, hidden_state_size, action_size, num_envs):
         super(GRUNetwork, self).__init__()
 
         self.gru = _init_gru(
@@ -95,19 +95,20 @@ class GRUNetwork(torch.nn.Module):
                 batch_first=True,
             )
         )
+        self.num_envs = num_envs
 
     def forward(self, inputs, last_hidden_state):
-        if inputs.size(0) > 8:
-            batch_seq = inputs.unsqueeze(0)
-        else:
+        if inputs.size(0) == self.num_envs:
             batch_seq = inputs.unsqueeze(1)
-        # (batch, seq, in)
+        else:
+            batch_seq = inputs.unsqueeze(0)
+
         output, hidden_state = self.gru(batch_seq, last_hidden_state)
 
-        if inputs.size(0) > 8:
-            output = output.squeeze(0)
-        else:
+        if inputs.size(0) == self.num_envs:
             output = output.squeeze(1)
+        else:
+            output = output.squeeze(0)
 
         return output, hidden_state
 
@@ -215,8 +216,10 @@ class ForwardModel(torch.nn.Module):
 
         intermediate_res = self.f_layer(concat_features)
         self.lrelu(intermediate_res)
+
         hidden_f = self.hidden(intermediate_res)
         self.lrelu(hidden_f)
+
         pred_state = self.s_layer(hidden_f)
 
         return pred_state
@@ -244,10 +247,13 @@ class InverseModel(torch.nn.Module):
 
         f_output = self.f_layer(concat_features)
         self.lrelu(f_output)
+
         hidden_1_out = self.hidden_1(f_output)
         self.lrelu(hidden_1_out)
+
         hidden_2_out = self.hidden_2(hidden_1_out)
         self.lrelu(hidden_2_out)
+
         s_output = self.s_layer(hidden_2_out)
         pred_actions = self.softmax(s_output)
 
