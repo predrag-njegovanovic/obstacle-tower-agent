@@ -9,7 +9,12 @@ from agent.definitions import FRAME_SKIP_SIZE
 
 def start_environment(connection, worker_id, env_path, config, retro, realtime_mode):
     obstacle_tower = ObstacleTowerEnv(
-        env_path, worker_id=worker_id, retro=retro, config=config, timeout_wait=90, realtime_mode=False
+        env_path,
+        worker_id=worker_id,
+        retro=retro,
+        config=config,
+        timeout_wait=90,
+        realtime_mode=False,
     )
 
     obstacle_tower.reset()
@@ -43,7 +48,9 @@ def start_environment(connection, worker_id, env_path, config, retro, realtime_m
 
 
 class ParallelEnvironment:
-    def __init__(self, env_path, num_of_processes, config, retro=False, realtime_mode=False):
+    def __init__(
+        self, env_path, num_of_processes, config, retro=False, realtime_mode=False
+    ):
         self.parent_connections, self.child_connections = zip(
             *[Pipe() for _ in range(num_of_processes)]
         )
@@ -58,8 +65,14 @@ class ParallelEnvironment:
         self.processes = [
             Process(
                 target=start_environment,
-                args=(child, worker_id, self.env_path,
-                      self.config, self.retro, self.realtime_mode),
+                args=(
+                    child,
+                    worker_id,
+                    self.env_path,
+                    self.config,
+                    self.retro,
+                    self.realtime_mode,
+                ),
                 daemon=True,
             )
             for worker_id, child in enumerate(self.child_connections)

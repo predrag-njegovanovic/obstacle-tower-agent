@@ -34,10 +34,11 @@ if __name__ == "__main__":
         "--observation_stack_size",
         type=int,
         default=10000,
-        help="Number of collected observations before calculating mean and std."
+        help="Number of collected observations before calculating mean and std.",
     )
     parser.add_argument(
-        "--first_person", type=bool, default=False, help="Use first person camera.")
+        "--first_person", type=bool, default=False, help="Use first person camera."
+    )
     parser.add_argument(
         "--use_cuda",
         type=bool,
@@ -48,17 +49,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.first_person:
-        config = {'agent-perspective': 0}
+        config = {"agent-perspective": 0}
     else:
-        config = {'agent-perspective': 1}
+        config = {"agent-perspective": 1}
 
     inference_envs = 1
     env_path = definitions.OBSTACLE_TOWER_PATH
     model_name = os.path.join(definitions.MODEL_PATH, args.model_name)
     observation_mean, observation_std = observation_mean_and_std(
-        args.observation_stack_size, config)
+        args.observation_stack_size, config
+    )
 
-    env = ObstacleTowerEnv(env_path, config, retro=False, realtime_mode=True)
+    env = ObstacleTowerEnv(env_path, config=config, retro=False, realtime_mode=True)
     env.seed(args.seed)
     env.reset()
 
@@ -89,7 +91,7 @@ if __name__ == "__main__":
     else:
         device = torch.device("cpu")
 
-    frame, key, time = env.reset()
+    frame, key, time, _ = env.reset()
     state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
 
     value, policy, rhs = agent.act(state)
@@ -97,7 +99,7 @@ if __name__ == "__main__":
     while True:
         for _ in range(definitions.FRAME_SKIP_SIZE):
             obs, reward, done, _ = env.step(action)
-            frame, _, _ = obs
+            frame, _, _, _ = obs
 
         state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
         if done:
