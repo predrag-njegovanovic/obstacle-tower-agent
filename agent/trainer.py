@@ -109,12 +109,14 @@ class Trainer:
         reset = True
         counter = 0
         episode_reward = torch.zeros(self.num_envs)
+        starting_time = torch.zeros(self.num_envs)
 
-        for episode_step in tqdm(range(self.batch_size)):
+        for episode_step in range(self.batch_size):
             with torch.no_grad():
                 if reset:
                     state, key, time = self.env.reset()
                     last_rhs = torch.zeros((1, self.num_envs, 512)).to(self.device)
+                    starting_time.copy_(time)
                     value, policy, rhs = self.agent_network.act(state, last_rhs)
                     reset = False
                 else:
@@ -132,6 +134,13 @@ class Trainer:
                     break
 
                 if len(torch.nonzero(reward)):
+                    for env in range(self.num_envs):
+                        if reward[env]:
+                            reward[env].copy_(
+                                reward[env] + 2 * (new_time[env] / starting_time[env])
+                            )
+                            starting_time[env].copy_(new_time[env])
+
                     counter += 1
 
                 action_encoding = torch.zeros((self.num_envs, self.action_size)).to(

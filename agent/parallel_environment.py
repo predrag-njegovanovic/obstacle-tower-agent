@@ -29,9 +29,6 @@ def start_environment(connection, worker_id, env_path, config, retro, realtime_m
                 observation, reward, done, info = obstacle_tower.step(action)
                 state, keys, time, _ = observation
 
-                if reward > 0:
-                    reward = 1
-
                 cumulative_reward += reward
 
                 if done:
