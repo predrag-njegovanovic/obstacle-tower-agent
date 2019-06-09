@@ -18,9 +18,16 @@ ACTION_TURN = [0, 1, 2]
 # no-op/jump
 ACTION_JUMP = [0, 1]
 
-network_params = {
-    "first_filters": 16,
-    "second_filters": 32,
-    "convolution_output": 256,
-    "hidden_state": 256,
+FRAME_SKIP_SIZE = 6
+UPDATE_CYCLES = 3
+
+network_configuration = {
+    "first_filters": 32,
+    "second_filters": 64,
+    "convolution_output": 512,
+    "hidden_state_size": 512,
+    "feature_extraction_filters": 32,
+    "feature_output_size": 288,
+    "forward_model_layer": 342,
+    "inverse_model_layer": 576,
 }

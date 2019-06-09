@@ -7,135 +7,188 @@ class TowerAgent(torch.nn.Module):
     def __init__(
         self,
         action_size,
+        num_envs,
         first_layer_filters,
         second_layer_filters,
         conv_output_size,
         hidden_state_size,
-        entropy_coeff=0.01,
+        feature_ext_filters,
+        feature_output_size,
+        forward_model_f_layer,
+        inverse_model_f_layer,
+        obs_mean,
+        obs_std,
+        entropy_coeff=0.001,
         value_coeff=0.5,
-        pc_lambda=0.99,
         ppo_epsilon=0.2,
+        beta=0.8,
+        isc_lambda=0.8,
     ):
 
         super(TowerAgent, self).__init__()
 
-        self.conv_network = base_networks.ConvNetwork(
-            first_layer_filters, second_layer_filters, conv_output_size
+        self.conv_network = base_networks.BaseNetwork(
+            first_layer_filters,
+            second_layer_filters,
+            conv_output_size,
+            obs_mean,
+            obs_std,
         )
-        self.lstm_network = base_networks.LSTMNetwork(
-            conv_output_size, hidden_state_size, action_size
+        self.lstm_network = base_networks.GRUNetwork(
+            conv_output_size, hidden_state_size, action_size, num_envs
         )
-        self.pc_network = base_networks.PixelControlNetwork(action_size)
+        self.feature_extractor = base_networks.FeatureExtractor(
+            feature_ext_filters, feature_output_size, obs_mean, obs_std
+        )
+        self.forward_model = base_networks.ForwardModel(forward_model_f_layer)
+        self.inverse_model = base_networks.InverseModel(
+            inverse_model_f_layer, action_size
+        )
 
         self.value = base_networks.ValueNetwork()
         self.policy = base_networks.PolicyNetwork(action_size)
-        self.entropy_coeff = entropy_coeff
+        self.cross_entropy = torch.nn.CrossEntropyLoss()
+        self.mse_loss = torch.nn.MSELoss()
+        self.ent_coeff = entropy_coeff
         self.value_coeff = value_coeff
-        self.pc_lambda = pc_lambda
         self.ppo_epsilon = ppo_epsilon
+        self.beta = beta
+        self.isc_lambda = isc_lambda
 
     def to_cuda(self):
         self.conv_network.cuda()
         self.lstm_network.cuda()
-        self.pc_network.cuda()
         self.value.cuda()
         self.policy.cuda()
+        self.feature_extractor.cuda()
+        self.forward_model.cuda()
+        self.inverse_model.cuda()
 
-    # def parameters(self):
-    #     return (
-    #         list(self.conv_network.parameters())
-    #         + list(self.lstm_network.parameters())
-    #         + list(self.value.parameters())
-    #         + list(self.policy.parameters())
-    #         + list(self.pc_network.parameters())
-    #     )
-
-    def act(self, state, reward_and_last_action, last_hidden_state=None):
+    def act(self, state, last_hidden_state=None):
         """
         Run batch of states (3-channel images) through network to get
         estimated value and policy logs.
         """
         conv_features = self.conv_network(state)
-        features, hidden_state = self.lstm_network(
-            conv_features, reward_and_last_action, last_hidden_state
-        )
+        features, hidden_state = self.lstm_network(conv_features, last_hidden_state)
 
         value = self.value(features)
         policy = self.policy(features)
 
         return value, policy, hidden_state
 
-    def pixel_control_act(self, state, reward_and_last_action, last_hidden_state=None):
-        """
-        Run batch of states (sampled from experience memory) through network to get
-        auxiliary Q value.
-        """
-        conv_features = self.conv_network(state)
-        features, hidden_state = self.lstm_network(
-            conv_features, reward_and_last_action, last_hidden_state
+    def icm_act(self, state, new_state, action_indices, eta=0.1):
+        state_features = self.feature_extractor(state)
+        new_state_features = self.feature_extractor(new_state)
+
+        pred_state = self.forward_model(state_features, action_indices)
+
+        intrinsic_reward = (eta / 2) * self.mse_loss(pred_state, new_state_features)
+        return intrinsic_reward, state_features, new_state_features
+
+    def forward_act(self, batch_state_features, batch_action_indices):
+        batch_pred_state = self.forward_model(
+            batch_state_features, batch_action_indices
         )
+        return batch_pred_state
 
-        q_aux, q_aux_max = self.pc_network(features)
-        return q_aux, q_aux_max
+    def inverse_act(self, batch_state_features, batch_new_state_features):
+        batch_pred_acts = self.inverse_model(
+            batch_state_features, batch_new_state_features
+        )
+        return batch_pred_acts
 
-    def ppo_loss(self, old_policy, policy, advantage, returns, values, action_indices):
+    def ppo_loss(
+        self,
+        old_policy,
+        new_policy,
+        advantage,
+        returns,
+        values,
+        action_indices,
+        new_state_features,
+        new_state_predictions,
+        action_predictions,
+    ):
         policy_loss = self.ppo_policy_loss(
-            old_policy, policy, advantage, action_indices
+            old_policy, new_policy, advantage, action_indices
         )
+        value_loss = self.value_loss(returns, values)
+        entropy = self.entropy(new_policy)
+
+        loss = policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
+        forward_loss = self.forward_loss(new_state_features, new_state_predictions)
+        inverse_loss = self.inverse_loss(action_predictions, action_indices.detach())
+
+        agent_loss = (
+            self.isc_lambda * loss
+            + (1 - self.beta) * inverse_loss
+            + self.beta * forward_loss
+        )
+
+        return agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
+
+    def a2c_loss(
+        self,
+        policy,
+        advantage,
+        returns,
+        values,
+        action_indices,
+        new_state_features,
+        new_state_predictions,
+        action_predictions,
+    ):
+
+        policy_loss = self.policy_loss(policy, advantage, action_indices)
         value_loss = self.value_loss(returns, values)
         entropy = self.entropy(policy)
 
-        loss = (
-            policy_loss + self.value_coeff * value_loss - self.entropy_coeff * entropy
+        loss = policy_loss + self.value_coeff * value_loss - self.ent_coeff * entropy
+        forward_loss = self.forward_loss(new_state_features, new_state_predictions)
+        inverse_loss = self.inverse_loss(action_predictions, action_indices.detach())
+
+        agent_loss = (
+            self.isc_lambda * loss
+            + (1 - self.beta) * inverse_loss
+            + self.beta * forward_loss
         )
 
-        return loss, policy_loss, value_loss, entropy
+        return agent_loss, policy_loss, value_loss, entropy, forward_loss, inverse_loss
 
-    def a2c_loss(self, policy_logs, advantage, returns, values, action_indices):
-        policy_loss = self.policy_loss(policy_logs, advantage, action_indices)
-        value_loss = self.value_loss(returns, values)
-        entropy = self.entropy(policy_logs)
+    def forward_loss(self, new_state_features, new_state_pred):
+        forward_loss = 0.5 * self.mse_loss(new_state_pred, new_state_features)
+        return forward_loss
 
-        loss = (
-            policy_loss + self.value_coeff * value_loss - self.entropy_coeff * entropy
-        )
-        return loss, policy_loss, value_loss, entropy
+    def inverse_loss(self, pred_acts, action_indices):
+        inverse_loss = self.cross_entropy(pred_acts, torch.argmax(action_indices, dim=1))
+        return inverse_loss
 
-    def pc_loss(self, action_size, action_indices, q_aux, pc_returns):
-        reshaped_indices = action_indices.view(-1, action_size, 1, 1)
-        pc_q_aux = torch.mul(q_aux, reshaped_indices)
+    def value_loss(self, returns, values):
+        return 0.5 * self.mse_loss(values, returns)
 
-        pc_q_aux_sum = torch.sum(pc_q_aux, dim=1, keepdim=False)
+    def entropy(self, policy):
+        dist = torch.distributions.Categorical
+        return dist(probs=policy).entropy().mean()
 
-        # try with torch.sum instead of torch.mean
-        pc_loss = self.pc_lambda * torch.mean(torch.pow(pc_returns * pc_q_aux_sum, 2))
-        return pc_loss
+    def policy_loss(self, policy, adventage, action_indices):
+        policy_logs = torch.log(torch.clamp(policy, 1e-20, 1.0))
 
-    def v_loss(self, v_returns, new_value):
-        v_loss = torch.mean(torch.pow(v_returns - new_value, 2))
-        return v_loss
+        pi_logs = torch.sum(torch.mul(policy_logs, action_indices.cuda()), 1)
+        policy_loss = -torch.mean(adventage * pi_logs)
+        return policy_loss
 
-    def policy_loss(self, policy_logs, adventage, action_indices):
-        pi_logs = torch.sum(torch.mul(policy_logs, action_indices), 1)
-        return -torch.mean(adventage * pi_logs)
+    def ppo_policy_loss(self, old_policy, new_policy, advantage, action_indices):
+        new_policy = torch.log(torch.clamp(new_policy, 1e-20, 1.0))
+        old_policy = torch.log(torch.clamp(old_policy, 1e-20, 1.0))
 
-    def ppo_policy_loss(self, old_policy, policy, advantage, action_indices):
-        pi_logs = torch.sum(torch.mul(policy, action_indices), 1)
-        old_pi_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
+        policy_logs = torch.sum(torch.mul(new_policy, action_indices), 1)
+        old_policy_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
 
-        ratio = torch.exp(pi_logs - old_pi_logs)
+        ratio = torch.exp(policy_logs - old_policy_logs)
         ratio_term = ratio * advantage
         clamp = torch.clamp(ratio, 1 - self.ppo_epsilon, 1 + self.ppo_epsilon)
         clamp_term = clamp * advantage
 
         policy_loss = -torch.min(ratio_term, clamp_term).mean()
         return policy_loss
-
-    def value_loss(self, returns, values):
-        return torch.mean(torch.pow(returns - values, 2))
-
-    def entropy(self, policy_logs):
-        policy = torch.exp(policy_logs)
-
-        # try with torch.sum instead of torch.mean
-        return torch.mean(policy_logs * policy)

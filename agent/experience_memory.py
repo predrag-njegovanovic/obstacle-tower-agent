@@ -25,224 +25,127 @@ class ExperienceMemory:
         self.frame = (
             torch.zeros((memory_size, num_envs, 3, 84, 84)).type(torch.uint8).to(device)
         )
-        self.time = torch.zeros((memory_size, num_envs))
-        self.key = torch.zeros((memory_size, num_envs))
         self.reward = torch.zeros((memory_size, num_envs))
         self.done_state = torch.zeros((memory_size, num_envs))
-        self.policy_values = torch.zeros((memory_size, action_size, num_envs)).to(
-            device
-        )
         self.value = torch.zeros((memory_size, num_envs)).to(device)
-        self.pixel_change = torch.zeros((memory_size, num_envs, 20, 20)).type(
-            torch.uint8
-        )
-        self.q_aux = torch.zeros((memory_size, num_envs, 20, 20))
-        self.action_indices = torch.zeros((memory_size, action_size, num_envs)).to(
+        self.action_indices = torch.zeros((memory_size, num_envs, action_size)).to(
             device
         )
-        self.reward_action = torch.zeros((memory_size, action_size + 1, num_envs)).to(
+        self.policy_values = torch.zeros((memory_size, num_envs, action_size)).to(
             device
         )
-
-    def mean_reward(self):
-        return torch.mean(self.reward).item()
+        self.state_f = torch.zeros((memory_size, num_envs, 288)).to(device)
+        self.new_state_f = torch.zeros((memory_size, num_envs, 288)).to(device)
 
     def empty(self):
         self.frame[0].copy_(self.frame[-1])
-        self.time[0].copy_(self.time[-1])
-        self.reward_action[0].copy_(self.reward_action[-1])
         self.memory_pointer = 0
 
     def add_experience(
         self,
         new_state,
         old_state,
-        new_time,
-        old_time,
-        key,
         reward,
         action_encoding,
         done,
         predicted_value,
-        policy_value,
-        q_aux,
+        policy,
+        state_f,
+        new_state_f,
     ):
 
         self.frame[self.memory_pointer].copy_(new_state)
-        self.time[self.memory_pointer].copy_(new_time)
-        self.key[self.memory_pointer].copy_(key)
-        self.reward[self.memory_pointer].copy_(
-            self._calculate_reward(reward, new_time, old_time, key)
-        )
+        self.reward[self.memory_pointer].copy_(reward)
         self.value[self.memory_pointer].copy_(predicted_value)
-        self.policy_values[self.memory_pointer].copy_(policy_value)
         self.action_indices[self.memory_pointer].copy_(action_encoding)
-        self.reward_action[self.memory_pointer].copy_(
-            self._concatenate_reward_and_action(reward, action_encoding)
-        )
         self.done_state[self.memory_pointer].copy_(done)
-        self.pixel_change[self.memory_pointer].copy_(
-            self._calculate_pixel_change(new_state, old_state)
-        )
-        self.q_aux[self.memory_pointer].copy_(q_aux)
+        self.policy_values[self.memory_pointer].copy_(policy)
+        self.state_f[self.memory_pointer].copy_(state_f)
+        self.new_state_f[self.memory_pointer].copy_(new_state_f)
 
     def increase_frame_pointer(self):
         self.memory_pointer += 1
 
-    def last_frames(self):
+    def last_states(self):
         states = self.frame[self.memory_pointer - 1]
-        time = self.time[self.memory_pointer - 1]
-        reward_actions = self.reward_action[self.memory_pointer - 1]
+        return states
 
-        return states, reward_actions.view(self.num_envs, self.action_size + 1), time
+    def a2c_policy_sampling(self, running_reward_std):
+        env = random.randint(0, self.num_envs - 1)
+        last_element = self.memory_pointer - 1
 
-    def sample_observations(self, sequence):
+        states = self.frame[:last_element, env, :, :, :]
+        rewards = self.reward[:last_element, env] / running_reward_std[env]
+        values = self.value[:last_element, env]
+        action_indices = self.action_indices[:last_element, env, :]
+        dones = self.done_state[:last_element, env]
+        state_features = self.state_f[:last_element, env, :]
+        new_state_features = self.new_state_f[:last_element, env, :]
+
+        return (
+            states,
+            action_indices,
+            rewards,
+            values,
+            dones,
+            state_features,
+            new_state_features,
+        )
+
+    def ppo_policy_sampling(self, minibatch_size, running_reward_std):
         batched_value = []
-        batched_q_aux = []
-        batched_policy = []
         batched_states = []
         batched_reward = []
-        batched_pixel_control = []
         batched_action_indices = []
-        batched_reward_actions = []
+        batched_policy = []
+        batched_dones = []
+        batched_state_f = []
+        batched_new_state_f = []
 
-        for env in range(self.num_envs):
-            sample_index = 0
-            start = random.randint(0, self.memory_size - sequence - 1)
+        for _ in range(minibatch_size):
+            env = random.randint(0, self.num_envs - 1)
+            last_element = self.memory_pointer - 1
 
-            if self.done_state[start, env]:
-                start += 1
-
-            for i in range(sequence):
-                if self.done_state[start + i, env]:
-                    sample_index = start + i - 1
-                    break
-
-            sample_index = sequence
-
-            if sample_index <= start:
-                continue
-
-            states = self.frame[start:sample_index, env, :, :, :]
-            reward_actions = self.reward_action[start:sample_index, :, env]
-            rewards = self.reward[start:sample_index, env]
-            values = self.value[start:sample_index, env]
-            pixel_controls = self.pixel_change[start:sample_index, env, :, :]
-            action_indices = self.action_indices[start:sample_index, :, env]
-            q_auxes = self.q_aux[start:sample_index, env, :, :]
-            policies = self.policy_values[start:sample_index, :, env]
+            states = self.frame[:last_element, env, :, :, :]
+            rewards = self.reward[:last_element, env] / running_reward_std[env]
+            values = self.value[:last_element, env]
+            action_indices = self.action_indices[:last_element, env, :]
+            policies = self.policy_values[:last_element, env, :]
+            dones = self.done_state[:last_element, env]
+            state_features = self.state_f[:last_element, env, :]
+            new_state_features = self.new_state_f[:last_element, env, :]
 
             batched_value.append(values)
-            batched_q_aux.append(q_auxes)
             batched_states.append(states)
             batched_reward.append(rewards)
-            batched_policy.append(policies)
-            batched_pixel_control.append(pixel_controls)
-            batched_reward_actions.append(reward_actions)
             batched_action_indices.append(action_indices)
+            batched_policy.append(policies)
+            batched_dones.append(dones)
+            batched_state_f.append(state_features)
+            batched_new_state_f.append(new_state_features)
 
         return (
             torch.cat(batched_states, dim=0),
-            torch.cat(batched_reward_actions, dim=0),
             torch.cat(batched_action_indices, dim=0),
             torch.cat(batched_policy, dim=0),
             batched_reward,
             batched_value,
-            batched_q_aux,
-            batched_pixel_control,
+            batched_dones,
+            torch.cat(batched_state_f, dim=0),
+            torch.cat(batched_new_state_f, dim=0),
         )
 
-    # try gae later
-    def compute_returns(self, rewards, values, discount=0.99):
+    def compute_returns(self, rewards, values, dones, discount=0.99):
         num_steps = rewards.shape[0]
+        masks = 1 - dones
 
         returns = np.zeros((num_steps))
-        if rewards[-1]:
-            returns[-1] = rewards[-1]
-        else:
+        if not dones[-1]:
             returns[-1] = values[-1]
 
         for step in reversed(range(num_steps - 1)):
-            returns[step] = rewards[step] + discount * returns[step + 1]
-
-        return returns
-
-    def compute_pc_returns(self, q_aux, rewards, pixel_controls, gamma=0.9):
-        num_steps, height, width = pixel_controls.shape
-
-        pc_returns = torch.zeros((num_steps, height, width))
-        if rewards[-1]:
-            pc_returns[-1] = q_aux[-1]
-
-        for step in reversed(range(num_steps - 1)):
-            pc_returns[step] = (
-                pixel_controls[step].type(torch.float32) + gamma * pc_returns[step + 1]
+            returns[step] = (
+                rewards[step] + discount * returns[step + 1] * masks[step + 1]
             )
 
-        return pc_returns
-
-    def compute_v_returns(self, rewards, values, gamma=1.0):
-        num_steps = values.shape[0]
-
-        v_returns = np.zeros((num_steps))
-        if rewards[-1]:
-            v_returns[-1] = values[-1]
-
-        for step in reversed(range(num_steps - 1)):
-            v_returns[step] = rewards[step] + gamma * v_returns[step + 1]
-
-        return v_returns
-
-    def _calculate_reward(self, reward, new_time, old_time, key):
-        return reward + self._time_normalize(reward, new_time, old_time) + 0.2 * key
-
-    def _time_normalize(self, reward, new_time, old_time):
-        """
-        Scale time difference between two steps to [0, 1] range.
-        """
-        diff = torch.zeros(new_time.shape)
-        for index, _ in enumerate(reward):
-            difference = new_time[index] - old_time[index]
-            if reward[index]:
-                diff[index] = difference / 1000
-            else:
-                diff[index] = difference / 10000
-
-        return diff
-
-    def _subsample(self, frame_mean_diff, piece_size=4):
-        shapes = frame_mean_diff.shape
-        subsamples_shape = (
-            self.num_envs,
-            shapes[1] // piece_size,
-            piece_size,
-            shapes[2] // piece_size,
-            piece_size,
-        )
-        reshaped_frame = frame_mean_diff.reshape(subsamples_shape)
-        reshaped_mean = torch.mean(reshaped_frame, -1)
-        pc_output = torch.mean(reshaped_mean, 2)
-        return pc_output.type(torch.uint8)
-
-    def _calculate_pixel_change(self, new_state, old_state):
-        """
-        Calculate pixel change between two states by creating
-        frame differences and then subsampling it to twenty 4x4 pieces.
-        """
-        new_state = new_state.type(torch.float32)
-        old_state = old_state.type(torch.float32)
-
-        frame_diff = torch.abs(
-            new_state[:, :, 2:-2, 2:-2] - old_state[:, :, 2:-2, 2:-2]
-        )
-        frame_mean = torch.mean(frame_diff, dim=1, keepdim=False)
-        subsampled_frame = self._subsample(frame_mean)
-        return subsampled_frame
-
-    def _concatenate_reward_and_action(self, reward, action_encoding):
-        """
-        Concatenate one-hot action representation from last state
-        and current state reward.
-        """
-        clipped_reward = torch.clamp(reward, 1, 0)
-        return torch.cat((action_encoding, clipped_reward.unsqueeze(0)), dim=0)
+        return returns

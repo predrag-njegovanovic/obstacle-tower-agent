@@ -1,10 +1,22 @@
 import os
 import torch
+import numpy as np
 
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
-from agent.definitions import MODEL_PATH
+from agent.definitions import MODEL_PATH, UPDATE_CYCLES
+
+
+class RewardForwardFilter:
+    def __init__(self, batch_size, num_envs, gamma):
+        self.running_reward = torch.zeros(batch_size, num_envs)
+        self.gamma = gamma
+
+    def update(self, step, reward):
+        self.running_reward[step, :] = (
+            self.running_reward[step, :] * self.gamma + reward
+        )
 
 
 class Trainer:
@@ -15,9 +27,9 @@ class Trainer:
         agent_network,
         action_space,
         num_envs,
-        experience_history_size,
+        experience_size,
         batch_size,
-        num_of_epoches,
+        num_of_epochs,
         total_timesteps,
         learning_rate,
         device,
@@ -28,10 +40,11 @@ class Trainer:
         self.experience = experience
         self.agent_network = agent_network
         self.action_space = action_space
+        self.action_size = len(action_space)
         self.num_envs = num_envs
-        self.experience_history_size = experience_history_size
+        self.experience_size = experience_size
         self.batch_size = batch_size
-        self.num_of_epoches = num_of_epoches
+        self.num_of_epochs = num_of_epochs
         self.total_timesteps = total_timesteps
         self.distribution = torch.distributions.Categorical
         self.lr = learning_rate
@@ -41,6 +54,7 @@ class Trainer:
         )
         self.device = device
         self.ppo = ppo
+        self.reward_updater = RewardForwardFilter(batch_size, num_envs, 0.9)
 
     def sample_action(self, actions):
         """
@@ -48,31 +62,39 @@ class Trainer:
         Input: torch.Tensor([8, 54])
         Return: torch.Tensor([8])
         """
-        return self.distribution(actions).sample()
+        return self.distribution(probs=actions).sample()
 
     def train(self):
-        num_of_updates = self.total_timesteps // self.experience_history_size
-        action_size = len(self.action_space)
+        num_of_updates = self.total_timesteps // (self.num_envs * self.batch_size)
 
-        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optim, lr_lambda=lambda step: (num_of_updates - step) / num_of_updates
+        learning_rate_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optim, lr_lambda=lambda step: 1 - (step / float(num_of_updates))
         )
 
         for timestep in range(num_of_updates):
-            self._fill_experience(timestep, action_size)
-            pi_loss, v_loss, entropy, pc_loss, vr_loss = self._update_observations(
-                action_size
+            episode_reward = self.collect_experience()
+            policy_loss, value_loss, entropy_loss, forward_loss, inverse_loss = (
+                self.agent_update()
             )
-            mean_reward = self.experience.mean_reward()
+            self.writer.add_scalars(
+                "tower/rewards",
+                {
+                    "mean": torch.mean(episode_reward),
+                    "std": torch.std(episode_reward),
+                    "max": torch.max(episode_reward),
+                },
+                timestep,
+            )
+            self.writer.add_scalar("tower/policy_loss", policy_loss.mean(), timestep)
+            self.writer.add_scalar("tower/value_loss", value_loss.mean(), timestep)
+            self.writer.add_scalar("tower/entropy_loss", entropy_loss.mean(), timestep)
+            self.writer.add_scalar("tower/forward_loss", forward_loss.mean(), timestep)
+            self.writer.add_scalar("tower/inverse_loss", inverse_loss.mean(), timestep)
+            self.writer.add_scalar(
+                "tower/lr", np.array(learning_rate_scheduler.get_lr()), timestep
+            )
 
-            self.writer.add_scalar("tower/mean_reward", mean_reward, timestep)
-            self.writer.add_scalar("tower/policy_loss", torch.mean(pi_loss), timestep)
-            self.writer.add_scalar("tower/value_loss", torch.mean(v_loss), timestep)
-            self.writer.add_scalar("tower/entropy_loss", torch.mean(entropy), timestep)
-            self.writer.add_scalar("tower/pc_loss", torch.mean(pc_loss), timestep)
-            self.writer.add_scalar("tower/vr_loss", torch.mean(vr_loss), timestep)
-
-            lr_scheduler.step()
+            learning_rate_scheduler.step()
             self.experience.empty()
             if timestep % 250 == 0:
                 name = "ppo" if self.ppo else "a2c"
@@ -83,143 +105,214 @@ class Trainer:
 
         self.writer.close()
 
-    def _lr(self, lr_scheduler):
-        return lr_scheduler.get_lr()
+    def collect_experience(self):
+        reset = True
+        counter = 0
+        episode_reward = torch.zeros(self.num_envs)
+        starting_time = torch.zeros(self.num_envs)
 
-    def _fill_experience(self, timestep, action_size):
-        for step in tqdm(range(self.experience_history_size)):
+        for episode_step in range(self.batch_size):
             with torch.no_grad():
-                if not timestep:
-                    old_state, key, old_time = self.env.reset()
-                    reward_action = torch.zeros((self.num_envs, action_size + 1)).to(
-                        self.device
-                    )
-                    value, policy_acts, rhs = self.agent_network.act(
-                        old_state, reward_action
-                    )
-                    _, q_aux_max = self.agent_network.pixel_control_act(
-                        old_state, reward_action
-                    )
+                if reset:
+                    state, key, time = self.env.reset()
+                    last_rhs = torch.zeros((1, self.num_envs, 512)).to(self.device)
+                    starting_time.copy_(time)
+                    value, policy, rhs = self.agent_network.act(state, last_rhs)
+                    reset = False
                 else:
                     last_rhs = self.experience.last_hidden_state
-                    old_state, reward_action, old_time = self.experience.last_frames()
-                    value, policy_acts, rhs = self.agent_network.act(
-                        old_state, reward_action, last_rhs
-                    )
-                    _, q_aux_max = self.agent_network.pixel_control_act(
-                        old_state, reward_action, last_rhs
-                    )
+                    state = self.experience.last_states()
+                    value, policy, rhs = self.agent_network.act(state, last_rhs)
 
-                action = self.sample_action(policy_acts)
+                action = self.sample_action(policy)
                 new_actions = [self.action_space[act] for act in action]
 
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
 
-                action_encoding = torch.zeros((action_size, self.num_envs))
-                policies = policy_acts.view(action_size, self.num_envs)
-                for i in range(self.num_envs):
-                    action_encoding[action[i], i] = 1
+                if len(torch.nonzero(done)):
+                    break
 
+                if len(torch.nonzero(reward)):
+                    for env in range(self.num_envs):
+                        if reward[env]:
+                            reward[env].copy_(
+                                reward[env] + 2 * (new_time[env] / starting_time[env])
+                            )
+                            starting_time[env].copy_(new_time[env])
+
+                    counter += 1
+
+                action_encoding = torch.zeros((self.num_envs, self.action_size)).to(
+                    self.device
+                )
+
+                for i in range(self.num_envs):
+                    action_encoding[i, action[i]] = 1
+
+                intrinsic_reward, state_features, new_state_features = self.agent_network.icm_act(
+                    state, new_state, action_encoding
+                )
+
+                total_reward = reward + intrinsic_reward.cpu()
+                episode_reward += total_reward
+
+                self.reward_updater.update(episode_step, total_reward)
                 self.experience.add_experience(
                     new_state,
-                    old_state,
-                    new_time,
-                    old_time,
-                    key,
-                    reward,
+                    state,
+                    total_reward,
                     action_encoding,
                     done,
                     value,
-                    policies,
-                    q_aux_max,
+                    policy,
+                    state_features,
+                    new_state_features,
                 )
                 self.experience.increase_frame_pointer()
-                timestep += 1
 
-    def _update_observations(self, action_size):
-        epoches = self.num_of_epoches
+        print("Hits in episode run: {}".format(counter))
+        return episode_reward
 
-        value_loss = torch.zeros(epoches)
-        policy_loss = torch.zeros(epoches)
-        entropy_loss = torch.zeros(epoches)
-        value_replay_loss = torch.zeros(epoches)
-        pixel_control_loss = torch.zeros(epoches)
+    def agent_update(self):
+        total_episode_steps = UPDATE_CYCLES * self.num_of_epochs
 
-        for i in tqdm(range(epoches)):
-            exp_batches = self.experience.sample_observations(self.batch_size)
-            states, reward_actions, action_indices, old_policy, rewards, values, q_auxes, pixel_controls = (
-                exp_batches
-            )
+        value_loss = torch.zeros(total_episode_steps)
+        policy_loss = torch.zeros(total_episode_steps)
+        entropy_loss = torch.zeros(total_episode_steps)
+        forward_loss = torch.zeros(total_episode_steps)
+        inverse_loss = torch.zeros(total_episode_steps)
 
-            batch_returns = []
-            batch_v_returns = []
-            batch_pc_returns = []
-            batch_advantages = []
+        memory_pointer = self.experience.memory_pointer
+        running_reward = self.reward_updater.running_reward[: memory_pointer - 1, :]
+        running_reward_std = torch.std(running_reward, dim=0)
 
-            for env in range(self.num_envs):
-                returns = self.experience.compute_returns(rewards[env], values[env])
-                pc_returns = self.experience.compute_pc_returns(
-                    q_auxes[env], rewards[env], pixel_controls[env]
-                )
-                v_returns = self.experience.compute_v_returns(rewards[env], values[env])
-                returns = torch.Tensor(returns).to(self.device)
-                v_returns = torch.Tensor(v_returns).to(self.device)
+        for update in range(UPDATE_CYCLES):
+            for epoch in tqdm(range(self.num_of_epochs)):
+                if self.ppo:
+                    minibatch_size = self.num_envs // self.num_of_epochs
+                    experience_batches = self.experience.ppo_policy_sampling(
+                        minibatch_size, running_reward_std
+                    )
+                else:
+                    experience_batches = self.experience.a2c_policy_sampling(
+                        running_reward_std
+                    )
 
-                adv = returns - values[env]
+                if self.ppo:
+                    agent_loss, policy, value, entropy, forward, inverse = self.ppo_loss(
+                        minibatch_size, *experience_batches
+                    )
+                else:
+                    agent_loss, policy, value, entropy, forward, inverse = self.a2c_loss(
+                        *experience_batches
+                    )
 
-                batch_advantages.append(adv)
-                batch_returns.append(returns)
-                batch_v_returns.append(v_returns)
-                batch_pc_returns.append(pc_returns)
+                self.optim.zero_grad()
+                loss = agent_loss / self.num_of_epochs
+                loss.backward()
 
-            advantage = torch.cat(batch_advantages, dim=0).unsqueeze(-1)
-            advantage = (advantage - torch.mean(advantage, dim=0)) / torch.std(
-                advantage + 1e-6
-            )
+                value_loss[update * self.num_of_epochs + epoch].copy_(value)
+                policy_loss[update * self.num_of_epochs + epoch].copy_(policy)
+                entropy_loss[update * self.num_of_epochs + epoch].copy_(entropy)
+                forward_loss[update * self.num_of_epochs + epoch].copy_(forward)
+                inverse_loss[update * self.num_of_epochs + epoch].copy_(inverse)
 
-            new_value, policy_acts, _ = self.agent_network.act(states, reward_actions)
-            q_aux, _ = self.agent_network.pixel_control_act(states, reward_actions)
-
-            returns = torch.cat(batch_returns, dim=0).to(self.device)
-            pc_returns = torch.cat(batch_pc_returns, dim=0).to(self.device)
-            v_returns = torch.cat(batch_v_returns, dim=0).to(self.device)
-
-            if self.ppo:
-                agent_loss, pi_loss, v_loss, entropy = self.agent_network.ppo_loss(
-                    old_policy,
-                    policy_acts,
-                    advantage,
-                    returns,
-                    new_value,
-                    action_indices,
-                )
-            else:
-                agent_loss, pi_loss, v_loss, entropy = self.agent_network.a2c_loss(
-                    policy_acts, advantage, returns, new_value, action_indices
-                )
-
-            pc_loss = self.agent_network.pc_loss(
-                action_size, action_indices, q_aux, pc_returns
-            )
-            v_loss = self.agent_network.v_loss(v_returns, new_value)
-
-            loss = agent_loss + v_loss + pc_loss
-
-            value_loss[i].copy_(v_loss)
-            policy_loss[i].copy_(pi_loss)
-            entropy_loss[i].copy_(entropy)
-            pixel_control_loss[i].copy_(pc_loss)
-            value_replay_loss.copy_(v_loss)
-
-            self.optim.zero_grad()
-            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.agent_network.parameters(), 40)
             self.optim.step()
 
-        return (
-            policy_loss,
-            value_loss,
-            entropy_loss,
-            pixel_control_loss,
-            value_replay_loss,
+        return (policy_loss, value_loss, entropy_loss, forward_loss, inverse_loss)
+
+    def a2c_loss(
+        self,
+        states,
+        action_indices,
+        rewards,
+        values,
+        dones,
+        state_features,
+        new_state_features,
+    ):
+
+        returns = self.experience.compute_returns(rewards, values, dones)
+        returns = torch.Tensor(returns).to(self.device)
+
+        advantage = returns - values
+        advantage = (advantage - torch.mean(advantage)) / (torch.std(advantage) + 1e-6)
+
+        rhs = torch.zeros((1, 1, 512)).to(self.device)
+        new_value, policy_acts, _ = self.agent_network.act(states, rhs)
+
+        predicted_states = self.agent_network.forward_act(
+            state_features, action_indices
         )
+        predicted_acts = self.agent_network.inverse_act(
+            state_features, new_state_features
+        )
+
+        losses = self.agent_network.a2c_loss(
+            policy_acts,
+            advantage,
+            returns,
+            new_value,
+            action_indices,
+            new_state_features,
+            predicted_states,
+            predicted_acts,
+        )
+
+        return losses
+
+    def ppo_loss(
+        self,
+        minibatch_size,
+        states,
+        action_indices,
+        old_policy,
+        rewards,
+        values,
+        dones,
+        state_features,
+        new_state_features,
+    ):
+        batch_returns = []
+        batch_advantages = []
+
+        for env in range(minibatch_size):
+            returns = self.experience.compute_returns(
+                rewards[env], values[env], dones[env]
+            )
+
+            returns = torch.Tensor(returns).to(self.device)
+
+            advantage = returns - values[env]
+
+            batch_advantages.append(advantage)
+            batch_returns.append(returns)
+
+        returns = torch.cat(batch_returns, dim=0).to(self.device)
+        advantage = torch.cat(batch_advantages, dim=0)
+        advantage = (advantage - torch.mean(advantage)) / (torch.std(advantage) + 1e-6)
+
+        rhs = torch.zeros((1, 1, 512)).to(self.device)
+        new_value, policy_acts, _ = self.agent_network.act(states, rhs)
+
+        predicted_states = self.agent_network.forward_act(
+            state_features, action_indices
+        )
+        predicted_acts = self.agent_network.inverse_act(
+            state_features, new_state_features
+        )
+
+        losses = self.agent_network.ppo_loss(
+            old_policy,
+            policy_acts,
+            advantage,
+            returns,
+            new_value,
+            action_indices,
+            new_state_features,
+            predicted_states,
+            predicted_acts,
+        )
+        return losses

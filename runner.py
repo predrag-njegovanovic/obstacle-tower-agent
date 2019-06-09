@@ -6,14 +6,13 @@ import agent.definitions as definitions
 
 from obstacle_tower_env import ObstacleTowerEnv
 from agent.tower_agent import TowerAgent
-from agent.utils import create_action_space
+from agent.utils import create_action_space, observation_mean_and_std
 from agent.parallel_environment import prepare_state
 
 
 def greedy_policy(action_space, policy):
     probs = torch.distributions.Categorical
-    # index = probs(policy).sample()
-    index = torch.argmax(policy)
+    index = probs(probs=policy).sample()
     return action_space[index], index
 
 
@@ -32,6 +31,15 @@ if __name__ == "__main__":
         help="Environment can use seed. Default seed is 0.",
     )
     parser.add_argument(
+        "--observation_stack_size",
+        type=int,
+        default=10000,
+        help="Number of collected observations before calculating mean and std.",
+    )
+    parser.add_argument(
+        "--first_person", type=bool, default=False, help="Use first person camera."
+    )
+    parser.add_argument(
         "--use_cuda",
         type=bool,
         default=True,
@@ -40,22 +48,39 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.first_person:
+        config = {"agent-perspective": 0}
+    else:
+        config = {"agent-perspective": 1}
+
+    inference_envs = 1
     env_path = definitions.OBSTACLE_TOWER_PATH
     model_name = os.path.join(definitions.MODEL_PATH, args.model_name)
+    observation_mean, observation_std = observation_mean_and_std(
+        args.observation_stack_size, config
+    )
 
-    env = ObstacleTowerEnv(env_path, retro=False, realtime_mode=True)
+    env = ObstacleTowerEnv(env_path, config=config, retro=False, realtime_mode=True)
     env.seed(args.seed)
+    env.reset()
 
-    config = definitions.network_params
+    network_configuration = definitions.network_configuration
     actions = create_action_space()
     action_size = len(actions)
 
     agent = TowerAgent(
         action_size,
-        config["first_filters"],
-        config["second_filters"],
-        config["convolution_output"],
-        config["hidden_state"],
+        inference_envs,
+        network_configuration["first_filters"],
+        network_configuration["second_filters"],
+        network_configuration["convolution_output"],
+        network_configuration["hidden_state_size"],
+        network_configuration["feature_extraction_filters"],
+        network_configuration["feature_output_size"],
+        network_configuration["forward_model_layer"],
+        network_configuration["inverse_model_layer"],
+        observation_mean,
+        observation_std,
     )
 
     agent.load_state_dict(torch.load(model_name))
@@ -66,29 +91,19 @@ if __name__ == "__main__":
     else:
         device = torch.device("cpu")
 
-    frame, key, time = env.reset()
+    frame, key, time, _ = env.reset()
     state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
 
-    action_encoding = torch.zeros((action_size, 1)).to(device)
-    reward_action = torch.zeros((1, action_size + 1)).to(device)
-
-    # Bootstrap initial state and reward_action vector
-    value, policy, rhs = agent.act(state, reward_action)
+    value, policy, rhs = agent.act(state)
     action, action_index = greedy_policy(actions, policy)
-    action_encoding[action_index] = 1
     while True:
-        obs, reward, done, _ = env.step(action)
-        frame, _, _ = obs
+        for _ in range(definitions.FRAME_SKIP_SIZE):
+            obs, reward, done, _ = env.step(action)
+            frame, _, _, _ = obs
+
         state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
         if done:
             break
 
-        reward_tensor = torch.Tensor([reward]).unsqueeze(1).to(device)
-        temporary_tensor = torch.cat((action_encoding, reward_tensor))
-        reward_action.copy_(temporary_tensor.transpose_(0, 1))
-
-        value, policy, rhs = agent.act(state, reward_action, rhs)
+        value, policy, rhs = agent.act(state, rhs)
         action, action_index = greedy_policy(actions, policy)
-
-        action_encoding = torch.zeros((action_size, 1)).cuda()
-        action_encoding[action_index] = 1
