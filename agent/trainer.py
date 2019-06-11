@@ -9,6 +9,12 @@ from agent.definitions import MODEL_PATH, UPDATE_CYCLES
 
 
 class RewardForwardFilter:
+    """
+    Collect running discounted reward.
+    Used for reward scaling during training since intrinsic rewards are non-stationary.
+    Speeds up training.
+    """
+
     def __init__(self, batch_size, num_envs, gamma):
         self.running_reward = torch.zeros(batch_size, num_envs)
         self.gamma = gamma
@@ -62,11 +68,18 @@ class Trainer:
         Input: torch.Tensor([8, 54])
         Return: torch.Tensor([8])
         """
+
         return self.distribution(probs=actions).sample()
 
     def train(self):
+        """
+        Train Obstacle tower agent.
+        One training cycle collects experience and calculates agent loss.
+        """
+
         num_of_updates = self.total_timesteps // (self.num_envs * self.batch_size)
 
+        # linear learning rate decay
         learning_rate_scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optim, lr_lambda=lambda step: 1 - (step / float(num_of_updates))
         )
@@ -106,6 +119,12 @@ class Trainer:
         self.writer.close()
 
     def collect_experience(self):
+        """
+        Fill memory with experiences gather from environment.
+        Since both methods (PPO and A2C) are policy gradient methods
+        there is no sampling and whole memory is used for update.
+        """
+
         reset = True
         counter = 0
         episode_reward = torch.zeros(self.num_envs)
@@ -130,9 +149,11 @@ class Trainer:
                 self.experience.last_hidden_state = rhs
                 new_state, key, new_time, reward, done = self.env.step(new_actions)
 
+                # make training episodic and restart environment on done state
                 if len(torch.nonzero(done)):
                     break
 
+                # If agent goes through door give him additional reward based on remaining time
                 if len(torch.nonzero(reward)):
                     for env in range(self.num_envs):
                         if reward[env]:

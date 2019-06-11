@@ -67,10 +67,13 @@ class ExperienceMemory:
         self.memory_pointer += 1
 
     def last_states(self):
-        states = self.frame[self.memory_pointer - 1]
-        return states
+        return self.frame[self.memory_pointer - 1]
 
     def a2c_policy_sampling(self, running_reward_std):
+        """
+        Sample experiences from one randomly chosen environment.
+        """
+
         env = random.randint(0, self.num_envs - 1)
         last_element = self.memory_pointer - 1
 
@@ -93,6 +96,12 @@ class ExperienceMemory:
         )
 
     def ppo_policy_sampling(self, minibatch_size, running_reward_std):
+        """
+        Sample experiences from number(minibatch_size) environments
+        and concatenate those experiences.
+        Done specifically for the PPO training.
+        """
+
         batched_value = []
         batched_states = []
         batched_reward = []
@@ -136,6 +145,10 @@ class ExperienceMemory:
         )
 
     def compute_returns(self, rewards, values, dones, discount=0.99):
+        """
+        Calculate discounted returns (rewards from Tn to T0 timestep).
+        """
+
         num_steps = rewards.shape[0]
         masks = 1 - dones
 

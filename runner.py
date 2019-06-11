@@ -10,7 +10,7 @@ from agent.utils import create_action_space, observation_mean_and_std
 from agent.parallel_environment import prepare_state
 
 
-def greedy_policy(action_space, policy):
+def sample_action(action_space, policy):
     probs = torch.distributions.Categorical
     index = probs(probs=policy).sample()
     return action_space[index], index
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     state = torch.Tensor(prepare_state(frame)).unsqueeze(0).to(device)
 
     value, policy, rhs = agent.act(state)
-    action, action_index = greedy_policy(actions, policy)
+    action, action_index = sample_action(actions, policy)
     while True:
         for _ in range(definitions.FRAME_SKIP_SIZE):
             obs, reward, done, _ = env.step(action)
@@ -106,4 +106,4 @@ if __name__ == "__main__":
             break
 
         value, policy, rhs = agent.act(state, rhs)
-        action, action_index = greedy_policy(actions, policy)
+        action, action_index = sample_action(actions, policy)

@@ -10,8 +10,9 @@ from agent import definitions
 
 def prepare_state(state):
     """
-    Convert array to pytorch.Tensor and reshape it as (C, H, W)
+    Downsize, convert array to pytorch.Tensor and reshape it as (C, H, W)
     """
+
     frame = cv2.resize(state, (84, 84), interpolation=cv2.INTER_AREA)
     height, width, channel = frame.shape
     frame = frame * 255
@@ -35,6 +36,12 @@ def device():
 
 
 def observation_mean_and_std(num_steps, config):
+    """
+    Collect experiences from environment for num_steps and calculate
+    observation mean and standard deviation.
+    Used for state normalization during training and inference phases.
+    """
+
     env_path = definitions.OBSTACLE_TOWER_PATH
     env = ObstacleTowerEnv(env_path, config=config, retro=False,
                            realtime_mode=False, worker_id=20)

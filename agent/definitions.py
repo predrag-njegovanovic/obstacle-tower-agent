@@ -18,7 +18,11 @@ ACTION_TURN = [0, 1, 2]
 # no-op/jump
 ACTION_JUMP = [0, 1]
 
+# frame-skipping
 FRAME_SKIP_SIZE = 6
+
+# number of updates after certain amoung of timesteps during PPO training
+# total updates = num of update x num of epoches
 UPDATE_CYCLES = 3
 
 network_configuration = {

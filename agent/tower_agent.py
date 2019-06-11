@@ -69,6 +69,7 @@ class TowerAgent(torch.nn.Module):
         Run batch of states (3-channel images) through network to get
         estimated value and policy logs.
         """
+
         conv_features = self.conv_network(state)
         features, hidden_state = self.lstm_network(conv_features, last_hidden_state)
 
@@ -78,6 +79,12 @@ class TowerAgent(torch.nn.Module):
         return value, policy, hidden_state
 
     def icm_act(self, state, new_state, action_indices, eta=0.1):
+        """
+        Run batch of states (3-channel images) through network to get intrinsic reward.
+        Intrinsic reward calculation:
+            eta/2 * mean((F'(St+1) - F(St+1))^2)
+        """
+
         state_features = self.feature_extractor(state)
         new_state_features = self.feature_extractor(new_state)
 
@@ -87,16 +94,10 @@ class TowerAgent(torch.nn.Module):
         return intrinsic_reward, state_features, new_state_features
 
     def forward_act(self, batch_state_features, batch_action_indices):
-        batch_pred_state = self.forward_model(
-            batch_state_features, batch_action_indices
-        )
-        return batch_pred_state
+        return self.forward_model(batch_state_features, batch_action_indices)
 
     def inverse_act(self, batch_state_features, batch_new_state_features):
-        batch_pred_acts = self.inverse_model(
-            batch_state_features, batch_new_state_features
-        )
-        return batch_pred_acts
+        return self.inverse_model(batch_state_features, batch_new_state_features)
 
     def ppo_loss(
         self,
@@ -171,17 +172,31 @@ class TowerAgent(torch.nn.Module):
         dist = torch.distributions.Categorical
         return dist(probs=policy).entropy().mean()
 
-    def policy_loss(self, policy, adventage, action_indices):
+    def policy_loss(self, policy, advantage, action_indices):
+        """
+        A2C policy loss calculation: -1/n * sum(advantage * log(policy)).
+        """
+
         policy_logs = torch.log(torch.clamp(policy, 1e-20, 1.0))
 
+        # only take policies for taken actions
         pi_logs = torch.sum(torch.mul(policy_logs, action_indices.cuda()), 1)
-        policy_loss = -torch.mean(adventage * pi_logs)
+        policy_loss = -torch.mean(advantage * pi_logs)
         return policy_loss
 
     def ppo_policy_loss(self, old_policy, new_policy, advantage, action_indices):
+        """
+        PPO policy loss calculation: mean(-min(ratio, cut_term)).
+
+        Ratio: Advantage * (new_policy / old_policy).
+
+        Cut term: 1 - epsilon <= Ratio <= 1 + epsilon.
+        """
+
         new_policy = torch.log(torch.clamp(new_policy, 1e-20, 1.0))
         old_policy = torch.log(torch.clamp(old_policy, 1e-20, 1.0))
 
+        # only take polices for taken actions
         policy_logs = torch.sum(torch.mul(new_policy, action_indices), 1)
         old_policy_logs = torch.sum(torch.mul(old_policy, action_indices), 1)
 

@@ -98,6 +98,11 @@ class GRUNetwork(torch.nn.Module):
         self.num_envs = num_envs
 
     def forward(self, inputs, last_hidden_state):
+        """
+        During training process, when obtaining next state, pass inputs as batch through GRU cells.
+        Obtaining value and policy on stacked observation requires processing as a sequence.
+        """
+
         if inputs.size(0) == self.num_envs:
             batch_seq = inputs.unsqueeze(1)
         else:
@@ -125,6 +130,7 @@ class ValueNetwork(torch.nn.Module):
         """
         Return estimated value V(s).
         """
+
         # create Tensor([8]) out of Tensor(8 x 1)
         value = torch.squeeze(self.value(inputs))
         return value
@@ -144,6 +150,7 @@ class PolicyNetwork(torch.nn.Module):
         """
         Return action probabilities.
         """
+
         fc_out = self.fully_connected(inputs)
         policy = self.policy(fc_out)
         return policy
@@ -176,6 +183,10 @@ class FeatureExtractor(torch.nn.Module):
         torch.nn.init.xavier_uniform_(self.linear.weight)
 
     def forward(self, state):
+        """
+        Create feature representation.
+        """
+
         state = state.type(torch.float32)
         state = (state - self.mean) / (self.std + 1e-6)
 
@@ -202,27 +213,27 @@ class ForwardModel(torch.nn.Module):
     def __init__(self, f_layer_size):
         super(ForwardModel, self).__init__()
 
-        self.f_layer = torch.nn.Linear(f_layer_size, 256)
+        self.first_layer = torch.nn.Linear(f_layer_size, 256)
         self.hidden = torch.nn.Linear(256, 256 * 2)
-        self.s_layer = torch.nn.Linear(256 * 2, 288)
+        self.second_layer = torch.nn.Linear(256 * 2, 288)
         self.lrelu = torch.nn.LeakyReLU(inplace=True)
 
-        torch.nn.init.xavier_uniform_(self.f_layer.weight)
+        torch.nn.init.xavier_uniform_(self.first_layer.weight)
         torch.nn.init.xavier_uniform_(self.hidden.weight)
-        torch.nn.init.xavier_uniform_(self.s_layer.weight)
+        torch.nn.init.xavier_uniform_(self.second_layer.weight)
 
     def forward(self, features, action_indices):
         concat_features = torch.cat((features, action_indices), dim=1)
 
-        intermediate_res = self.f_layer(concat_features)
+        intermediate_res = self.first_layer(concat_features)
         self.lrelu(intermediate_res)
 
         hidden_f = self.hidden(intermediate_res)
         self.lrelu(hidden_f)
 
-        pred_state = self.s_layer(hidden_f)
+        predicted_state = self.second_layer(hidden_f)
 
-        return pred_state
+        return predicted_state
 
 
 class InverseModel(torch.nn.Module):
@@ -254,7 +265,7 @@ class InverseModel(torch.nn.Module):
         hidden_2_out = self.hidden_2(hidden_1_out)
         self.lrelu(hidden_2_out)
 
-        s_output = self.s_layer(hidden_2_out)
-        pred_actions = self.softmax(s_output)
+        softmax_output = self.s_layer(hidden_2_out)
+        predicted_action = self.softmax(softmax_output)
 
-        return pred_actions
+        return predicted_action

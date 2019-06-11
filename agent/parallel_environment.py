@@ -45,6 +45,11 @@ def start_environment(connection, worker_id, env_path, config, retro, realtime_m
 
 
 class ParallelEnvironment:
+    """
+    Wrapper around Obstacle tower environment.
+    Highlevel manipulation with environment in parallel fashion.
+    """
+
     def __init__(
         self, env_path, num_of_processes, config, retro=False, realtime_mode=False
     ):
