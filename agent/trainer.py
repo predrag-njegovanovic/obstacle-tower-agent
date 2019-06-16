@@ -111,6 +111,9 @@ class Trainer:
             self.experience.empty()
             if timestep % 250 == 0:
                 name = "ppo" if self.ppo else "a2c"
+                if not os.path.exists(MODEL_PATH):
+                    os.mkdir(MODEL_PATH)
+
                 path = os.path.join(
                     MODEL_PATH, "model_{}_{}.bin".format(name, timestep)
                 )
