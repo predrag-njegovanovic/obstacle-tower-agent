@@ -8,7 +8,6 @@ __pycache__/
 
 # Project specific
 /ObstacleTower
-/models/*
 /runs/*
 
 # Distribution / packaging
