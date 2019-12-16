@@ -1,6 +1,6 @@
 torch==1.0.1
 torchvision==0.2.2.post3
-tensorflow-gpu==1.9.0
+tensorflow-gpu==1.15.0
 tensorboardX==1.6
 tqdm==4.31.1
 opencv-python==4.1.0.25
